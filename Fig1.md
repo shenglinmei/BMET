@@ -1,6 +1,8 @@
 ---
 title: "R Notebook Fig1"
-output: html_notebook
+output:
+  rmarkdown::github_document:
+    toc: true
 ---
 
 #load data and cell annotation 
