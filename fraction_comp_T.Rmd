@@ -1,0 +1,310 @@
+
+---
+title: Test for cell fractions using the compositional data analysis (T cell)
+output: html_notebook
+---
+
+
+
+Functions:
+
+```{r}
+simple_proportion_test <- function(data,  # rowns - samples; columns - cell types
+                              samplegroups,  # list of target and control groups
+                              cell_list1,  # array of cell types of interest
+                              cell_list2=NULL,  # Alternative set of cells; NULL when "others"
+                              quantile = 0.95,  # Quantile for power
+                              niter = 1000,  # Number of bootstrap iterations
+                              n_cell_counts = 500,  # Number of cells to remain
+                              alternative = 'two.sided',
+                              nseed = 239,
+                              n.cores=1) {
+
+  set.seed(nseed)
+  rl <- unlist(pagoda2:::papply(1:niter,function(i) {
+    # bootstrap resampling of the cells in each sample, producing resampled version of the data table
+    data <- t(apply(data,1,function(x) table(factor(sample(rep(colnames(data),x),sum(x),replace = T),levels=colnames(data)))))
+    
+    # run the test
+    if(is.null(cell_list2)) {
+      df <- cbind(rowSums(data[,cell_list1,drop=F]),rowSums(data[,setdiff(colnames(data),cell_list1),drop=F])); 
+      colnames(df) <- c(paste(cell_list1,collapse = '+'),'other')
+    } else {
+      df <- cbind(rowSums(data[,cell_list1,drop=F]),rowSums(data[,cell_list2,drop=F])); 
+      colnames(df) <- c(paste(cell_list1,collapse = '+'),paste(cell_list2,collapse = '+'))
+    }
+    
+    ratio <- df[,1]/rowSums(df); 
+    ratio[is.nan(ratio)] <- NA;
+    wilcox.test(ratio[samplegroups$trgt], ratio[samplegroups$ctrl],alternative = alternative)$p.value
+  },n.cores=n.cores,mc.preschedule=T))
+  
+  return(list(pvals=rl,q_pval=max(quantile(rl,1-quantile),quantile(rl,quantile))))
+}
+```
+
+
+
+
+```{r}
+
+library(reshape2)
+load('/d0-mendel/home/meisl/Workplace/BMME/Figures/revision/F3/F3_ano.RData')
+
+#  anoCell.T cell types
+#  Tcell.col  color palette for cell types
+#  fraction.T
+#  allsample.T
+fraction.palette=readRDS('/d0-mendel/home/meisl/Workplace/BMME/Figures/revision/data/fraction.palette.rds')
+fraction.palette2=c('grey',fraction.palette)
+names(fraction.palette2)[1]='Healthy'
+
+
+anoCell2=anoCell.T
+anoCell2[anoCell2 %in% c('CTL-1','CTL-2')]='CTL'
+
+ano2=data.frame('Group'=anoCell2,'sample'=allsample.T[names(anoCell2)])
+
+# Annotation vs sample
+tmp2 <- acast(ano2, Group ~ sample, fun.aggregate=length)
+#head(tmp2)
+# Normalise for the number of cells in each library
+tmp3 <- (sweep(tmp2, 2, colSums(tmp2), FUN='/'))
+tmp4 <- melt(tmp3)
+#head(tmp4)
+names(tmp4) <- c('annot', 'sample','pc.of.sample')
+#head(tmp4)
+
+tmp4$Fraction=apply(tmp4,1,function(x) strsplit(x[2],'-')[[1]][2])
+tmp4$Fraction=ordered(as.factor(tmp4$Fraction), levels = c( "Healthy", "Benign", "Distal","Involved","Tumor"))
+
+```
+
+
+
+```{r fig.width=7, fig.height=4}
+require(ggpubr)
+### barplot
+lis=list()
+for(i in unique(anoCell2) ){
+  tmp=tmp4[tmp4[,1]==i,]
+  sig=compare_means(pc.of.sample ~ Fraction,  data = tmp)
+  sig$cell=i
+  sig=sig[sig$p.signif!='ns',]
+  print(i)
+  print(sig)
+  p1 <- ggplot(tmp, aes(x=Fraction,fill=Fraction,y=pc.of.sample)) + geom_boxplot(outlier.shape = -1,width=0.3,position=position_dodge(width=0.1))+ facet_wrap(~annot,scales="free_y")  + theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + theme(axis.text.x=element_blank()) + xlab("")  + ylab("")
+  #p1=p1+ geom_point(data = tmp, size = 0.6, shape = 21, position = position_jitterdodge()) 
+  p1=p1+theme(strip.background = element_rect(fill=Tcell.col[i]),strip.text = element_text(colour = 'black'))+ theme(legend.position="none")
+  p1=p1+stat_summary(fun.y=median,linetype="dotted", geom="smooth",size=0.8, aes(group=0),color='gray30')+scale_fill_manual(values=fraction.palette2)
+  lis[[i]]=p1
+  #p1
+  i=sub('/','_',i)
+  ggsave(paste(i,'.pdf',sep=''),p1,w=2.3,h=2.2)
+
+}
+
+
+b=  cowplot::plot_grid(plotlist=lis, ncol=4, nrow=2)
+
+b
+
+
+```
+
+
+
+
+
+The First step:
+Preparing the data: count table and 4 groups of samples (Involved, Noninvolved, Tumor, Whole)
+
+
+```{r}
+data=table(allsample.T[names(anoCell2)],anoCell2)
+
+head(data)
+s_names = rownames(data)
+
+samplegroups <- list(
+  inv = s_names[grepl("Involved", s_names, fixed = TRUE)],
+  noninv = s_names[grepl("Distal", s_names, fixed = TRUE)],
+  tum = s_names[grepl("Tumor", s_names, fixed = TRUE)],
+  whl = s_names[grepl("Benign", s_names, fixed = TRUE)],
+  heal =s_names[grepl("Healthy", s_names, fixed = TRUE)]
+)
+
+samplegroups
+```
+
+
+
+
+
+
+
+
+
+
+
+Example 1:
+
+Compare "one cell type" vs "others" between two groups of samples 
+
+Compare CTL vs others between tumor and Distal
+
+
+Using simple bootstrap resampling
+```{r}
+
+
+samplegroups$ctrl = samplegroups$noninv  # Distal
+
+samplegroups$trgt = samplegroups$tum  # Tumor
+#samplegroups
+
+cell_list1 = c('CTL')
+quantile = 0.99
+alternative = 'greater'
+
+print(cell_list1)
+print(quantile)
+print(samplegroups$ctrl)
+print(samplegroups$trgt)
+
+res = simple_proportion_test(data,
+                    samplegroups,
+                    cell_list1,  # array of cell types of interest
+                    quantile = quantile,  # Quantile for power
+                    alternative = alternative,
+                    n.cores=10)
+
+res$q_pval
+hist(log(res$pvals))
+```
+
+
+
+
+Using simple bootstrap resampling
+Compare NK cells vs others between Distal and Benign
+
+```{r}
+
+
+samplegroups$ctrl = samplegroups$whl  
+
+samplegroups$trgt = samplegroups$noninv  
+#samplegroups
+
+cell_list1 = c('NK')
+quantile = 0.99
+alternative = 'greater'
+
+print(cell_list1)
+print(quantile)
+print(samplegroups$ctrl)
+print(samplegroups$trgt)
+
+res = simple_proportion_test(data,
+                    samplegroups,
+                    cell_list1,  # array of cell types of interest
+                    quantile = quantile,  # Quantile for power
+                    alternative = alternative,
+                    n.cores=10)
+
+res$q_pval
+hist(log(res$pvals))
+```
+
+
+
+
+
+
+
+Using simple bootstrap resampling
+
+Compare CD4+ Naive vs others between Healthy and Tumor fraction
+
+```{r}
+
+
+samplegroups$ctrl = samplegroups$tum  
+
+samplegroups$trgt = samplegroups$heal  
+#samplegroups
+
+cell_list1 = c("CD4+ Naive")
+quantile = 0.99
+alternative = 'greater'
+
+print(cell_list1)
+print(quantile)
+print(samplegroups$ctrl)
+print(samplegroups$trgt)
+
+res = simple_proportion_test(data,
+                    samplegroups,
+                    cell_list1,  # array of cell types of interest
+                    quantile = quantile,  # Quantile for power
+                    alternative = alternative,
+                    n.cores=10)
+
+res$q_pval
+hist(log(res$pvals))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+Using simple bootstrap resampling
+
+Compare Th1/17 Naive vs others between Tumor and Distal fraction
+
+```{r}
+
+
+samplegroups$ctrl = samplegroups$noninv  # Distal
+
+samplegroups$trgt = samplegroups$tum  # Tumor
+#samplegroups
+
+cell_list1 = c("Th1/17")
+quantile = 0.99
+alternative = 'greater'
+
+print(cell_list1)
+print(quantile)
+print(samplegroups$ctrl)
+print(samplegroups$trgt)
+
+res = simple_proportion_test(data,
+                    samplegroups,
+                    cell_list1,  # array of cell types of interest
+                    quantile = quantile,  # Quantile for power
+                    alternative = alternative,
+                    n.cores=20)
+
+res$q_pval
+hist(log(res$pvals))
+```
+
+
+
+
+
+
+
+
+
+

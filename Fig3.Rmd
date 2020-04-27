@@ -1,0 +1,488 @@
+---
+title: "R Notebook Fig3"
+output: html_notebook
+---
+
+
+load data and cell annotation
+```{r fig.width=5, fig.height=5}
+source('../Lib.r')
+source('../utils.R')
+
+
+conT=readRDS('conos.Tcell.rds')
+
+load('F3_ano.RData')
+
+#  anoCell.T cell types
+#  Tcell.col  color palette for cell types
+#  fraction.T
+#  allsample.T
+fraction.palette=readRDS('../data/fraction.palette.rds')
+fraction.palette2=c('grey',fraction.palette)
+names(fraction.palette2)[1]='Healthy'
+
+
+# counters for embedding 
+load('Tcell.counter.RData')
+library(ggpubr)
+
+
+```
+
+
+
+embedding of T cell subpopulations
+```{r fig.width=5, fig.height=5}
+
+clpalette=function(n) { cols=Tcell.col[unique(anoCell.T)]; cols[1:n] }
+#
+con.color <- 'gray35'
+con.size=0.6
+a7 <- conT$plotGraph(groups=anoCell.T,alpha=0.2,plot.na=F,palette=clpalette,size=0.9,font.size=c(3.8,5))+
+  geom_path(aes(x, y), data=Cctl,col=con.color,linetype = 2,size=con.size)+
+  geom_path(aes(x, y), data=Ctreg,col=con.color,linetype = 2,size=con.size)+
+  geom_path(aes(x, y), data=CThelp,col=con.color,linetype = 2,size=con.size)+
+  geom_path(aes(x, y), data=Cnk,col=con.color,linetype = 2,size=con.size)+
+  geom_path(aes(x, y), data=Cother,col=con.color,linetype = 2,size=con.size)
+
+a7
+
+ggsave('F4.a.pdf',a7,width = 4,height=4)
+
+
+```
+
+
+density plot 
+```{r fig.width=8, fig.height=2.1}
+
+# density plot 
+
+fraction=fraction.T[names(anoCell)]
+#table(fraction)
+
+Tcell_emb=t(conT$embedding)[names(fraction),]
+
+library("viridis")           # Load
+
+plotlis=list()
+
+for( iterm in c('Benign','Distal','Involved','Tumor')){
+  
+  data2=t(conT$embedding)[names(fraction[fraction==iterm]),]
+  colnames(data2)=c('x','y')
+  data2=as.data.frame(data2)
+ # dim(data2)
+  
+  # raster polygon
+  xlims=c(min(Tcell_emb[,1])-1,max(Tcell_emb[,1])+1)
+  ylims=c(min(Tcell_emb[,2])-1,max(Tcell_emb[,2])+1)
+  gg=ggplot(data2, aes(x=x, y=y) ) + xlim(xlims) + ylim(ylims)+
+    stat_density_2d(aes(fill = ..density..), geom = "raster", contour = FALSE)  +xlab('')+ylab('')+
+    #scale_fill_distiller(palette=2, direction=0.1,expand = c(0, 0))+     # +ggtitle(iterm)
+    
+    scale_fill_viridis(option='B',alpha = 1,direction=1) +  #ggtitle(iterm)+
+    geom_point(aes(x=x,y=y), col='#FCFDBFFF',size=0.00001,alpha=0.2)+
+    #scale_x_continuous(expand = c(0, 0)) +
+    #scale_y_continuous(expand = c(0, 0)) +
+    theme_bw() +
+    theme(
+      legend.position='none',
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      panel.border = element_blank(),
+      panel.background = element_blank(),
+      #legend.position='none',
+      plot.margin = margin(0,0,0,0,"cm")) 
+  
+  gg=gg+theme(axis.title.y = element_text(margin = margin(t = 0, r = 0, b = 0, l = 0)))
+  
+  gg <- gg + theme(axis.title.x=element_blank(),
+                   # axis.text.x=element_text(size=7,margin = margin(0, unit = "cm")),
+                   axis.text.x=element_blank(),
+                   axis.ticks.x=element_line(),
+                   axis.title.y=element_blank(),
+                   axis.ticks.y=element_blank(),
+                   # axis.text.y=element_text(size=7,margin = margin(0, unit = "cm")),
+                   axis.text.y=element_blank(),
+                   axis.ticks.length = unit(0, "cm")
+  )
+  
+  con.color <- 'gray40'
+  con.size=0.5
+  cl='white'
+  gg=gg+  geom_path(aes(x, y), data=Cctl,col=cl,linetype = 2,size=con.size)+
+    geom_path(aes(x, y), data=Ctreg,col=cl,linetype = 2,size=con.size)+
+    geom_path(aes(x, y), data=CThelp,col=cl,linetype = 2,size=con.size)+
+    geom_path(aes(x, y), data=Cnk,col=cl,linetype = 2,size=con.size)+
+    geom_path(aes(x, y), data=Cother,col=cl,linetype = 2,size=con.size)
+  
+  #  gg=gg+  geom_path(aes(x, y), data=Cctl,col='#FF0000FF',linetype = 2,size=con.size)+
+  #    geom_path(aes(x, y), data=Ctreg,col='#4900FFFF',linetype = 2,size=con.size)+
+  #    geom_path(aes(x, y), data=CThelp,col='#90915b',linetype = 2,size=con.size)+
+  #    geom_path(aes(x, y), data=Cnk,col='#0049FFFF',linetype = 2,size=con.size)+
+  #    geom_path(aes(x, y), data=Cother,col='#376e77',linetype = 2,size=con.size)
+  
+  plotlis[[iterm]]=gg
+}
+
+
+b=  cowplot::plot_grid(plotlist=plotlis, ncol=4, nrow=1)
+
+b
+
+ggsave('F2.b.pdf',b,width = 10,height=2.5)
+
+
+```
+
+changes in cell proportions
+```{r fig.width=8, fig.height=4}
+
+anoCell2=anoCell.T
+anoCell2[anoCell2 %in% c('CTL-1','CTL-2')]='CTL'
+
+ano2=data.frame('Group'=anoCell2,'sample'=allsample.T[names(anoCell2)])
+
+# Annotation vs sample
+tmp2 <- acast(ano2, Group ~ sample, fun.aggregate=length)
+#head(tmp2)
+# Normalise for the number of cells in each library
+tmp3 <- (sweep(tmp2, 2, colSums(tmp2), FUN='/'))
+tmp4 <- melt(tmp3)
+names(tmp4) <- c('annot', 'sample','pc.of.sample')
+#head(tmp4)
+
+tmp4$Fraction=apply(tmp4,1,function(x) strsplit(x[2],'-')[[1]][2])
+tmp4$Fraction=ordered(as.factor(tmp4$Fraction), levels = c( "Healthy", "Benign", "Distal","Involved","Tumor"))
+
+
+
+### barplot
+lis=list()
+for(i in unique(anoCell2) ){
+  tmp=tmp4[tmp4[,1]==i,]
+  sig=compare_means(pc.of.sample ~ Fraction,  data = tmp)
+  sig=sig[sig$p.signif!='ns',]
+  print(i)
+  print(sig)
+  p1 <- ggplot(tmp, aes(x=Fraction,fill=Fraction,y=pc.of.sample)) + geom_boxplot(outlier.shape = -1,width=0.3,position=position_dodge(width=0.1))+ facet_wrap(~annot,scales="free_y")  + theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + theme(axis.text.x=element_blank()) + xlab("")  + ylab("")
+  #p1=p1+ geom_point(data = tmp, size = 0.6, shape = 21, position = position_jitterdodge()) 
+  p1=p1+theme(strip.background = element_rect(fill=Tcell.col[i]),strip.text = element_text(colour = 'black'))+ theme(legend.position="none")
+  p1=p1+stat_summary(fun.y=median,linetype="dotted", geom="smooth",size=0.8, aes(group=0),color='gray30')+scale_fill_manual(values=fraction.palette2)
+  lis[[i]]=p1
+  p1
+  i=sub('/','_',i)
+  ggsave(paste(i,'.pdf',sep=''),p1,w=2.3,h=2.2)
+  
+}
+
+
+b=  cowplot::plot_grid(plotlist=lis, ncol=4, nrow=2)
+
+b
+
+ggsave('S2b.pdf',b,w=8.6,h=4.6)
+
+```
+
+
+```{r fig.width=5, fig.height=5}
+
+
+getScore=function(aexp,m2,anoCell,tfraction,tsample,kkey){
+  m2=intersect(m2,colnames(aexp))
+  
+  ehaust=m2
+  
+  tmp=anoCell[grepl(kkey,anoCell)]
+  table(tmp)
+  cname=names(tmp)
+  cname=intersect(cname,rownames(aexp))
+
+  exp=as.matrix(aexp[cname,m2])
+  
+  mmax=apply(exp,2,function(x) max(x))
+  exp=exp[,mmax>0]
+  exp=apply(exp,2,function(x) x/max(x))
+  m2score=rowMeans(exp)
+  m2score_scale=scale(m2score)
+  names(m2score_scale)=names(m2score)
+  
+  #length(m2score_scale)
+  
+  dat=data.frame('m2score'=m2score_scale,'cell'=anoCell[cname],'Type'=tfraction[cname],'sample'=tsample[cname])
+  dat$Type <- ordered(dat$Type, levels = c('Healthy',"Benign", "Distal","Involved","Tumor"))
+
+  dat$Type2=apply(dat,1,function(x) paste(x[2],x[3]))
+  
+  dat$Type3=apply(dat,1,function(x) paste(x[2],x[3],x[4]))
+  
+  tmp=tapply(dat$m2score,dat$Type3,mean)
+  index=match(names(tmp),dat$Type3)
+  tmp_type=dat$Type2[index]
+  #tmp_type[1:5]
+  
+  dat2=data.frame('Type2'=tmp_type,'score'=tmp,'Type'=dat$Type[index],'cell'=dat$cell[index],'sample'=dat$sample[index])
+  
+  
+  frac=c('Healthy',"Benign", "Distal","Involved","Tumor")
+  
+  frac2=c(paste(unique(dat2$cell)[1],frac),paste(unique(dat2$cell)[2],frac))
+  
+  
+  nn=as.factor(dat2$Type2)
+  nn <- ordered(nn, levels = frac2)
+  dat2$Type2=nn
+  print(table(dat2$Type2))
+  dat2$fraction=dat2$Type
+  
+  return(dat2)
+}
+
+
+
+
+
+drawBoxplotFraction=function(tmp,name2,fout,myeloid.col,limHeight=1.5,dsize=3,sigl=NULL,height=3.3,width=2.5,ysize=11,xsize=11){
+  # limHeight=1.45
+  t=tapply(tmp$score , tmp$fraction,median)
+  nn=names(t)[which.max(t)]
+  
+  # filter significant pairs 
+  sig=compare_means(score ~ fraction,  data = tmp)
+  write.table(sig,paste(name2,'.pvalue.xls',sep=''),col.names=T,row.names=F,quote=F,sep='\t')
+  sig=sig[sig$p.signif!='ns',]
+  print(sig)
+  #sig=sig[(sig$group1==nn | sig$group2==nn),]
+  
+  if (!is.null(sigl)){
+    
+    sig=sig[sig$group1 %in% sigl,]
+    sig=sig[sig$group2 %in% sigl,]
+  }
+  
+  siglis=split(sig, seq(nrow(sig)))
+  pair=lapply(siglis,function(x) as.character(x[,2:3]))
+  
+  p1 <- ggplot(tmp, aes(x=fraction,fill=fraction,y=score)) + geom_boxplot(outlier.shape = -1,width=0.5,position=position_dodge(width=0.1)) +theme_classic() + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + xlab("")  + ylab(name2)
+  p1=p1+ geom_point(data = tmp,,color=adjustcolor(1,alpha=0.3), position = position_jitterdodge(0.3)) +
+    stat_compare_means(comparisons = pair,label = "p.signif",hide.ns=TRUE,size=dsize,tip.lengt=0.01,bracket.size =0.3,label.y.npc = "bottom")  #+ # Add pairwise comparisons p-value
+  
+  #p1=p1+ylim(c(min(tmp$score)*.7,max(tmp$score)*limHeight))
+  #p1=p1+ geom_point(data = tmp,color=adjustcolor(1,alpha=0.3),fill='grey', size = 1, shape = 21)
+  p1=p1+ theme(legend.position="none")
+  p1=p1+theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  p1=p1+theme( axis.text.y = element_text(angle = 45, hjust = 0.5,color = "black"),axis.text.x=element_text(size=xsize,color = "black"),axis.title.y = element_text(size = ysize,color = "black"))
+  
+  if (!is.null(myeloid.col)){
+    p1=p1+scale_fill_manual(values=myeloid.col)
+  }
+  
+  
+  ggsave(paste(fout,'.',name2,'.score.pvalue.pdf',sep=''),p1,w=width,h=height)
+  saveRDS(tmp,paste(fout,'.',name2,'.dat.rds',sep=''))
+  
+  #p1 <- ggplot(tmp, aes(x=cell,fill=cell,y=score)) + geom_boxplot(outlier.shape = -1,width=0.5,position=position_dodge(width=0.1)) +theme_classic() + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + xlab("")  + ylab(name2)
+  #p1=p1+ geom_point(data = tmp,,color=adjustcolor(1,alpha=0.3), position = position_jitterdodge(0.3)) + scale_fill_manual(values=myeloid.col)
+  #p1=p1+ theme(legend.position="none")+ylim(c(min(tmp$score)*.7,max(tmp$score)*1.4))
+  #p1
+  #ggsave(paste(name2,'.score.pdf',sep=''),p1,w=width,h=height)
+  #print(p1) 
+  return(p1)  
+}
+
+
+
+
+p2T=readRDS('p2.all.h.rds')
+
+
+fraction.T=ordered(as.factor(fraction.T), levels = c("Healthy", "Benign", "Distal","Involved","Tumor"))
+
+glist=getMarkers()
+
+```
+
+
+Run signature score
+
+```{r fig.width=5, fig.height=5}
+
+
+ylab='Cytotoxicity score'
+df1=getScore(p2T$counts,glist$cytotoxicity,anoCell.T,fraction.T,allsample.T,'CTL')
+drawBoxplotFraction(df1[df1$cell=='CTL-1',],ylab,'CTL1',fraction.palette2)   # fraction.palette
+drawBoxplotFraction(df1[df1$cell=='CTL-2',],ylab,'CTL2',fraction.palette2)   # fraction.palette
+
+
+ylab='Exhaustion score'
+df2=getScore(p2T$counts,glist$Exhaustion,anoCell.T,fraction.T,allsample.T,'CTL')
+drawBoxplotFraction(df2[df2$cell=='CTL-1',],ylab,'CTL1',fraction.palette2)   # fraction.palette
+drawBoxplotFraction(df2[df2$cell=='CTL-2',],ylab,'CTL2',fraction.palette2)   # fraction.palette
+
+
+
+
+
+ylab='Treg activity'
+df3=getScore(p2T$counts,glist$TregActivity,anoCell.T,fraction.T,allsample.T,'Treg')
+drawBoxplotFraction(df3,ylab,'Treg',fraction.palette2)   # fraction.palette
+
+```
+
+ correlation between CCR6 expression and Treg abundance 
+```{r fig.width=5, fig.height=4}
+
+###  correlation between CCR6 and Treg/TH abundance 
+
+
+scell='Treg'
+
+ccr6=p2T$counts[names(anoCell),'CCR6']
+
+
+nname=names(anoCell[anoCell==scell])
+anoSample=allsample.T[nname]
+tab=table(anoSample) %>% .[.>10] %>% names()
+anoSample=anoSample[anoSample %in% tab]
+#table(anoSample)
+
+
+ccr6=ccr6[names(anoSample)]
+
+Mexp=tapply(ccr6,anoSample,mean)
+ratio=tmp3[scell,names(Mexp)]
+
+dat1=data.frame('expression'=Mexp,'proportion'=ratio,'Fraction'=tmp3[scell,names(Mexp)] )
+
+dat1$fraction=apply(data.frame(rownames(dat1)),1,function(x) strsplit(x,'-')[[1]][2])
+dat1=dat1[dat1$fraction!='Benign',]
+
+ct <- cor.test(dat1$proportion,dat1$expression,alternative='greater')
+
+df=dat1
+df$sample=rownames(df)
+ct <- cor.test(df$proportion,df$expression,alternative='greater')
+gg <- ggplot(df, aes(x=proportion,y=expression)) + geom_point(aes(color=fraction,size=proportion))  +
+  geom_smooth(method='lm',linetype='dashed',alpha=0.15,size=0.5) + theme_bw() +
+  theme(axis.text.y=element_text(angle=90))  + guides(color=F) + #geom_text_repel(aes(color=sample))
+  xlab("Treg abundance") + ylab("CCR6 expression") +scale_color_manual(values=fraction.palette)+
+  geom_text(x=Inf,y=Inf,label=paste('R=',round(ct$estimate,2),' ','p=',round(ct$p.value,2),sep=''),hjust=1.2,vjust=1.2,size=3.5)
+gg
+
+gg=gg+theme(legend.position="none")
+pdf(paste('Treg','.2.pdf',sep=''),height=2.3,width=2.3)
+plot(gg)
+dev.off()
+
+```
+
+ correlation between CCR6 expression and Th1/17 abundance 
+
+```{r fig.width=5, fig.height=4}
+
+
+scell='Th1/17'
+
+ccr6=p2T$counts[names(anoCell),'CCR6']
+
+
+nname=names(anoCell[anoCell==scell])
+anoSample=allsample.T[nname]
+tab=table(anoSample) %>% .[.>10] %>% names()
+anoSample=anoSample[anoSample %in% tab]
+#table(anoSample)
+
+
+ccr6=ccr6[names(anoSample)]
+
+Mexp=tapply(ccr6,anoSample,mean)
+ratio=tmp3[scell,names(Mexp)]
+
+
+dat1=data.frame('expression'=Mexp,'proportion'=ratio,'Fraction'=tmp3[scell,names(Mexp)] )
+
+dat1$fraction=apply(data.frame(rownames(dat1)),1,function(x) strsplit(x,'-')[[1]][2])
+dat1=dat1[dat1$fraction!='Benign',]
+
+ct <- cor.test(dat1$proportion,dat1$expression,alternative='greater')
+
+
+
+df=dat1
+df$sample=rownames(df)
+ct <- cor.test(df$proportion,df$expression,alternative='greater')
+gg <- ggplot(df, aes(x=proportion,y=expression)) + geom_point(aes(color=fraction,size=proportion))  +
+  geom_smooth(method='lm',linetype='dashed',alpha=0.15,size=0.5) + theme_bw() +
+  theme(axis.text.y=element_text(angle=90))  + guides(color=F) + #geom_text_repel(aes(color=sample))
+  xlab("Th1/17 abundance") + ylab("CCR6 expression") +scale_color_manual(values=fraction.palette)+
+  geom_text(x=-Inf,y=Inf,label=paste('R=',round(ct$estimate,2),' ','p=',round(ct$p.value,2),sep=''),hjust=-0.05,vjust=1.2,size=3.5)
+gg
+
+gg=gg+theme(legend.position="none")
+pdf(paste('th','.2.pdf',sep=''),height=2.3,width=2.3)
+plot(gg)
+dev.off()
+
+
+```
+
+CCR6 expression 
+```{r fig.width=5, fig.height=5}
+
+
+getExp_Sample=function(aexp,gene,group,anoSample,fraction,min.num.cell=5,scale=NULL){
+  # exp colname is gene 
+  
+  cname=intersect(names(group),names(fraction))
+  
+  gexp=aexp[gene,cname]
+  
+  ttype=paste(group[cname],'|',anoSample[cname],'|',fraction[cname],sep='')
+  names(ttype)=cname
+  
+  if (!is.null(min.num.cell)){
+    sel= table(ttype) %>% .[.>min.num.cell] %>% names()
+    ttype=ttype[ttype %in% sel]
+  }
+  
+  cname=names(ttype)
+  Mexp=tapply(gexp[cname],ttype,mean)
+  
+  if (!is.null(scale)){ 
+    score_Mexp = scale(Mexp)
+    names(score_Mexp) = names(Mexp)
+    Mexp=score_Mexp
+  }
+  ano=lapply(sn(names(Mexp)),function(x) strsplit(x,'[|]')[[1]])
+  group=unlist(lapply(ano,function(x) x[1]))
+  anoSample=unlist(lapply(ano,function(x) x[2]))
+  fraction=unlist(lapply(ano,function(x) x[3]))
+  
+  dat2=data.frame('score'=Mexp,'group'=group,'sample'=anoSample,'fraction'=fraction)
+  return(dat2) 
+}
+
+
+
+aexp=t(p2T$counts)
+
+
+df=getExp_Sample(aexp,'CCR6',anoCell,samplef,fraction[fraction=='Tumor'],min.num.cell=10,scale=NULL)
+
+dat2 = data.frame(score = df[['score']], cell = df[['group']], sample = df[['sample']] , type = df[['fraction']])
+
+dat2$cell=ordered(as.factor(dat2$cell),levels=c('CD4+ Naive','CD8+ Naive','NK','NKT','CTL-1','CTL-2','Th1/17','Treg'))
+
+#drawBoxplot(dat2,'CCR6 expression',Tcell.col[as.character(unique(anoCell))])
+f=drawBoxplot(dat2,'CCR6 expression',Tcell.col[as.character(unique(anoCell))],limHeight=1.3,sigl=c('CTL-2','NK','Th1/17'),height=3,width=2.4)
+
+library(ggpubr)
+
+```
+
+
+
+

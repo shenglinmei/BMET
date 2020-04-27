@@ -1,0 +1,409 @@
+---
+title: "R Notebook S1"
+output: html_notebook
+---
+
+
+# load data and show embedding 
+```{r}
+
+library(Seurat)
+
+library(ggplot2)
+library(cowplot)
+library(patchwork)
+
+setwd('/home/meisl/Workplace/BMME/Revision/R1')
+
+source('/d0-mendel/home/meisl/Workplace/BMME/Figures/revision//Lib.r')
+
+#load('R1.RData')
+```
+
+
+
+```{r}
+# load('R1.RData)
+
+# load conos data and cell annotation 
+
+# pagoda object for Tumor fraction; basicP2proc() can generatepagoda object
+p2T=readRDS('../TumorFraction.p2.0406.rds')
+
+scon=readRDS('../data/BMET_conos.all.rds')
+
+# cell annotation; 
+# typefc2;fractionf;samplef
+load('../data/ano.RData')
+
+typefc2=as.factor(typefc2)
+cellano=typefc2[grepl('Tumor',names(typefc2))]
+
+# load color color palette for cell type 
+
+cellcol=readRDS('../data/cellType.color.rds')
+
+
+pf <- function(n) { cellcol[1:n]}
+
+```
+
+
+```{r fig.width=5, fig.height=5}
+p0 <- scon$plotGraph(raster=T,groups=typefc2,font.size=c(3.4,5),alpha=0.08,plot.na=F,palette=pf,size=0.8)
+p0
+
+ggsave('F1b.new.png',p0,height=5,width=5)
+
+
+```
+
+
+
+
+# load Seurat data 
+```{r}
+
+
+
+# embedding of all fraction 
+
+Seuratall=readRDS('/home/meisl/Workplace/BMME/Revision/Seurat4/Seurat.all.rds')
+emball=Seuratall@reductions$umap@cell.embeddings
+
+
+f1=embeddingPlot(emball,groups=typefc2,font.size=c(3.4,5),alpha=0.08,plot.na=F,palette=pf,size=0.2)+  
+  theme(panel.background = element_blank(),panel.border = element_rect(colour = "black", fill=NA, size=0.3))
+#  theme( panel.grid.major = element_blank(),
+#   panel.grid.minor = element_blank(),
+#    panel.border = element_blank(),
+#   panel.background = element_blank()) 
+
+
+
+ggsave('R1.Seurat.all2.embedding.png',f1,height=4,width=4)
+
+
+
+
+
+
+
+# load Seurat data  Seurat embedding  
+ST=readRDS('/home/meisl/Workplace/BMME/Revision/Seurat2/Tumor.out.rds')
+
+dim(ST@reductions$umap)
+emb=ST@reductions$umap@cell.embeddings
+
+
+f2=embeddingPlot(emb,groups=typefc2,font.size=c(3.4,5),alpha=0.08,plot.na=F,palette=pf,size=0.2)+  
+  theme(panel.background = element_blank(),panel.border = element_rect(colour = "black", fill=NA, size=0.3))
+
+
+ggsave('R1.Seurat.Tumor.fraction.png',f2,height=4,width=4)
+
+
+
+
+# Distal.fraction
+ST=readRDS('/home/meisl/Workplace/BMME/Revision/Seurat2/Noninvolved.out.rds')
+DimPlot(ST, reduction = "umap", label = TRUE)
+
+dim(ST@reductions$umap)
+emb=ST@reductions$umap@cell.embeddings
+
+
+f3=embeddingPlot(emb,groups=typefc2,font.size=c(3.4,5),alpha=0.08,plot.na=F,min.cluster.size = 20,palette=pf,size=0.2)+  
+  theme(panel.background = element_blank(),panel.border = element_rect(colour = "black", fill=NA, size=0.3))
+
+
+ggsave('R1.Seurat.Distal.fraction.png',f3,height=4,width=4)
+
+
+# Involved  fraction
+ST=readRDS('/home/meisl/Workplace/BMME/Revision/Seurat2/Involved.out.rds')
+DimPlot(ST, reduction = "umap", label = TRUE)
+
+dim(ST@reductions$umap)
+emb=ST@reductions$umap@cell.embeddings
+
+
+f4=embeddingPlot(emb,groups=typefc2,font.size=c(3.4,5),alpha=0.08,plot.na=F,palette=pf,size=0.2,min.cluster.size = 20)+  
+  theme(panel.background = element_blank(),panel.border = element_rect(colour = "black", fill=NA, size=0.3))
+
+
+ggsave('R1.Seurat.Involved.fraction.png',f1,height=4,width=4)
+
+
+
+# Benign fraction
+ST=readRDS('/home/meisl/Workplace/BMME/Revision/Seurat2/Whole.out.rds')
+DimPlot(ST, reduction = "umap", label = TRUE)
+
+dim(ST@reductions$umap)
+emb=ST@reductions$umap@cell.embeddings
+
+
+f5=embeddingPlot(emb,groups=typefc2,font.size=c(3.4,5),alpha=0.08,plot.na=F,palette=pf,size=0.2,min.cluster.size = 20)+  
+  theme(panel.background = element_blank(),panel.border = element_rect(colour = "black", fill=NA, size=0.3))
+
+
+ggsave('R1.Seurat.Whole.fraction.png',f1,height=4,width=4)
+
+
+
+```
+
+
+Seurat integration for all fraction 
+```{r fig.width=5, fig.height=5}
+f1
+
+```
+
+Seurat integration for individual fraction 
+
+Bengin Distal
+Involved Tumor
+```{r fig.width=8, fig.height=8}
+
+
+b=  cowplot::plot_grid(plotlist=list(f5,f3,f4,f2), ncol=2, nrow=2)
+
+b
+```
+
+#   cell distance using Seurte result 
+```{r fig.width=5, fig.height=5}
+
+# load Seurte DE genes 
+ST=readRDS('/home/meisl/Workplace/BMME/Revision/Seurat2/Tumor.out.rds')
+
+allde=readRDS('Seurat.DE.rds')
+
+# Seurte DE genes 
+#allde=list()
+#for (x in unique(cell)){
+#  print(x)
+#  allde[[x]]=FindMarkers(object = ST, ident.1 = x,group.by='cell')
+#}
+
+#saveRDS(allde,'Seurat.DE.rds')
+
+
+
+gl1 <- unname(unlist(lapply(allde, function(x) {
+  x=x[x[,'avg_logFC']>0,]
+  x <- x[order(x$p_val),]
+  head(rownames(x),n=120)
+})))
+
+
+gl1=unique(gl1)
+
+# expression matrix of Seurat
+t.exp=ST@assays$RNA@data
+#dim(t.exp)
+
+cname2=intersect(names(cellano),colnames(t.exp))
+length(cname2)
+t.exp=t(t.exp[gl1,cname2])
+#dim(t.exp)
+
+# Avearge expression per cell type 
+cma=apply(as.matrix(t.exp),2,function(x) tapply(x,cellano[rownames(t.exp)],mean))
+cma.cor.spearman <- cor(as.matrix(t(cma)),method='spearman')
+hc.spearman <- hclust(as.dist(1-cma.cor.spearman))
+
+
+pdf('Seurte expression distance.pdf',height=4,width=4.5)
+plot(hc.spearman,main='Seurte expression distance',xlab='',ylab='',sub="")
+dev.off()
+
+plot(hc.spearman,main='Seurte expression distance',xlab='',ylab='',sub="")
+
+```
+
+#   cell distance using conos result 
+```{r fig.width=5, fig.height=5}
+##
+#de_conos <- p2T$getDifferentialGenes(groups=cellano)
+
+
+gl1 <- unname(unlist(lapply(de_conos, function(x) {
+  x=x[x$Z>0,]
+  x <- x[order(x$Z,decreasing=T),]
+  head(rownames(x),n=120)
+})))
+
+#length(unique(gl1))
+gl1=unique(gl1)
+
+
+t.exp=p2T$counts[names(cellano),gl1]
+
+cma2=apply(t.exp,2,function(x) tapply(x,cellano,mean))
+#dim(cma2)
+
+cma.cor.spearman <- cor(as.matrix(t(cma2)),method='spearman')
+hc.spearman2 <- hclust(as.dist(1-cma.cor.spearman))
+plot(hc.spearman2)
+
+
+pdf('Conos expression distance.pdf',height=4,width=4.5)
+plot(hc.spearman2,main='Conos expression distance',xlab='',ylab='',sub="")
+dev.off()
+
+plot(hc.spearman2,main='Conos expression distance',xlab='',ylab='',sub="")
+
+```
+
+
+
+
+
+
+
+
+
+
+# score projenitor downstream branches 
+```{r fig.width=5, fig.height=5}
+
+getScore_Cell=function(aexp,gs,group,magnitude.normal=NULL,rscore=NULL){
+  # exp colname is gene 
+  
+  gs=intersect(gs,rownames(aexp))
+  cname=names(group)
+  exp=as.matrix(aexp[gs,cname])
+  
+  exp=exp[rowMeans(exp)!=0,] # remove unexpressed gene 
+  exp=exp[,colSums(exp)!=0]
+  cname=intersect(cname,colnames(exp))
+  
+  if (!is.null(magnitude.normal)){
+    exp=apply(exp,2,function(x) x/max(x))
+  }
+  
+  score=rowMeans(t(exp))
+  return(score) 
+}
+
+
+sel=c("Erythroid","Immature B","Monocyte prog")
+
+P2allde=p2all$getDifferentialGenes(groups=Toch(typefc2[typefc2 %in% sel]))
+names(P2allde)
+
+```
+
+downstream branches singature gene 
+```{r fig.width=5, fig.height=5}
+f=DEheatmap(p2all,Toch(typefc2[typefc2 %in% sel[1:3]]),'HSC.Score')
+plot(f$gtable)
+
+```
+
+# embedding of Progenitors and downstream branches
+```{r fig.width=5, fig.height=5}
+cname=names(typefc2[typefc2=='Progenitors'])
+emb=t(scon$embedding[,cname])
+
+# remove outliner 
+#plot(emb)
+emb=emb[emb[,2]>0,]
+cname=rownames(emb)
+
+
+cname_ano=names(typefc2[typefc2 %in% c(sel[1:3],'Progenitors')])
+cname_ano=t(scon$embedding[,cname_ano]) %>% .[.[,2]>0,] %>% rownames()
+
+
+p0 <- scon$plotGraph(raster=T,groups=typefc2[cname_ano],font.size=c(3.4,5),alpha=0.08,plot.na=F,palette=pf,size=0.8,title='cell')
+p0
+```
+
+
+# Scoring projenitors using downstream branches signature genes 
+```{r fig.width=8, fig.height=8}
+aexp=t(p2all$counts)
+allg_pfilter=lapply(P2allde,function(x) {
+  x=x[x$Z>0,]
+  #rownames(x)=x[,1]
+  # x=x[order(x$Z,decreasing=TRUE),][1:200,]
+  gs=rownames(x)[1:100]
+  gs[!is.na(gs)]
+})
+
+lis=list()
+
+lis[['cell']]=p0
+
+for (ii in sel[1:3]){
+  rm=setdiff(sel,ii)
+  gs=setdiff(allg_p3[[ii]],do.call(c,allg_p3[rm]))
+#  length(gs)
+  gs=intersect(gs,allg_pfilter[[ii]])
+  gs=gs[1:15]
+  gs=gs[!is.na(gs)]
+  
+  gs=allg_pfilter[[ii]][1:20]
+  finalg[[i]]=gs
+ # print(gs)
+  score=getScore_Cell(aexp,gs,Toch(typefc2)[cname])
+  
+ # plot(density(score))
+  q1=quantile(score,0.99)
+  score[score>q1]=q1
+  
+  col <- pagoda2:::val2col(score,gradient.range.quantile = 0.9,gradientPalette = colorRampPalette(c(rep('grey85',3),'red'))(1024))
+  p3 <- scon$plotGraph(alpha=0.1,size=0.3,colors=col,plot.na=F,title=ii)
+
+  ggsave(paste(ii,'score2.png',sep=''),p3,width = 3,height=3.1)
+  lis[[ii]]=p3
+  
+  
+}
+
+lrow=2
+lcol=2
+b=  cowplot::plot_grid(plotlist=lis, ncol=lrow, nrow=lcol)
+
+fout='Q1.HSC.png'
+ggsave(fout,b,width = 2.3*lrow,height=2.3*lcol)
+
+
+b
+
+```
+
+
+# downstream branches signature gene expression in projenitors
+```{r fig.width=9, fig.height=12}
+
+
+gs=c('CD79A','TCL1A','VPREB3','MPO','AZU1','LYZ','HBB','HBD','CA1','CD164','SPINK2','SOX4')
+
+#
+appname='HSC.marker.png'
+lrow=3
+lcol=4
+alpha=0.5
+
+
+lis=list()
+for (gene in gs){
+  #print(gene)
+  t=p2all$counts[cname,gene]
+  a=scon$plotGraph(colors =t,title=gene,alpha =0.8,size=0.01,plot.na=F)
+  lis[[gene]]=a
+}
+b=  cowplot::plot_grid(plotlist=lis, ncol=lrow, nrow=lcol)
+fout=paste(appname,'expConos.png',sep='')
+ggsave(fout,b,width = 2.3*lrow,height=2.3*lcol)
+
+b
+```
+
+
+

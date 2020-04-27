@@ -1,0 +1,633 @@
+---
+title: "R Notebook Fig2"
+output: html_notebook
+---
+
+
+load data and cell annotation
+```{r fig.width=5, fig.height=5}
+source('../Lib.r')
+source('../utils.R')
+
+# load conos object 
+scon=readRDS('/d0-mendel/home/meisl/Workplace/BMME/Figures/revision/data/BMET_all.conos.rds')
+
+p2=readRDS('p2.myeloid.rds')
+
+library(ggpubr)
+
+library("viridis")          
+
+# Load cell annotation 
+load('../data/ano.RData')
+samplef=gsub("Whole","Benign",samplef)
+
+
+
+```
+
+color palette
+```{r fig.width=5, fig.height=5}
+fraction.palette=readRDS('../data/fraction.palette.rds')
+
+fraction=fractionf[names(anoCell)]
+
+fraction=ordered(as.factor(fraction), levels = c( "Benign", "Distal","Involved","Tumor"))
+table(fraction)
+
+myeloid_emb=scon$embedding[names(anoCell),]
+
+clpalette <- function(n) { myeloid.col[1:n] }
+
+```
+
+
+embedding of myeloid cells 
+```{r fig.width=5, fig.height=5}
+#  F2 a   zoomin myeloid cells  
+xlims=c(min(myeloid_emb[,1])+0.38,max(myeloid_emb[,1])-0.01)
+ylims=c(min(myeloid_emb[,2])+0.63,max(myeloid_emb[,2])+0.08)
+
+
+a7 <- scon$plotGraph(groups=anoCell,alpha=0.2,plot.na=F,palette=clpalette,font.size = c(6, 7))+ xlim(xlims) + ylim(ylims)+
+  geom_path(aes(x, y), data=CmDC,col='black',linetype = 2)+
+  geom_path(aes(x, y), data=Ctim,col='black',linetype = 2)+
+  geom_path(aes(x, y), data=Ctam,col='black',linetype = 2)+
+  geom_path(aes(x, y), data=Cmono2,col='black',linetype = 2)+
+  geom_path(aes(x, y), data=Cmono3,col='black',linetype = 2)+
+  
+  geom_path(aes(x, y), data=Cmono1,col='black',linetype = 2)
+
+
+a7
+
+ggsave('F2.a.pdf',a7,width = 4.5,height=4.5)
+
+```
+
+
+
+changes in cell proportion  
+```{r fig.width=8, fig.height=6}
+
+ano2=data.frame('Group'=anoCell,'sample'=samplef[names(anoCell)])
+
+# Annotation vs sample
+tmp2 <- acast(ano2, Group ~ sample, fun.aggregate=length)
+head(tmp2)
+# Normalise for the number of cells in each library
+tmp3 <- (sweep(tmp2, 2, colSums(tmp2), FUN='/'))
+tmp4 <- melt(tmp3)
+head(tmp4)
+names(tmp4) <- c('annot', 'sample','pc.of.sample')
+head(tmp4)
+
+tmp4$Fraction=apply(tmp4,1,function(x) strsplit(x[2],'-')[[1]][2])
+tmp4$Fraction=ordered(as.factor(tmp4$Fraction), levels = c( "Benign", "Distal","Involved","Tumor"))
+
+
+
+### barplot
+lis=list()
+for(i in unique(anoCell) ){
+  tmp=tmp4[tmp4[,1]==i,]
+  sig=compare_means(pc.of.sample ~ Fraction,  data = tmp)
+  sig=sig[sig$p.signif!='ns',]
+  print(i)
+  print(sig)
+  p1 <- ggplot(tmp, aes(x=Fraction,fill=Fraction,y=pc.of.sample)) + geom_boxplot(outlier.shape = -1,width=0.3,position=position_dodge(width=0.1))+ facet_wrap(~annot,scales="free_y")  + theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + theme(axis.text.x=element_blank()) + xlab("")  + ylab("")
+  #p1=p1+ geom_point(data = tmp, size = 0.6, shape = 21, position = position_jitterdodge()) 
+  p1=p1+theme(strip.background = element_rect(fill=myeloid.col[i]),strip.text = element_text(colour = 'black'))+ theme(legend.position="none")
+  p1=p1+stat_summary(fun.y=median,linetype="dotted", geom="smooth",size=0.8, aes(group=0),color='gray30')+scale_fill_manual(values=fraction.palette)
+  lis[[i]]=p1
+  
+}
+
+
+b=  cowplot::plot_grid(plotlist=lis, ncol=3, nrow=2)
+
+b
+
+
+ggsave('S2b.pdf',b,w=6.6,h=4.6)
+
+
+```
+
+
+TIM and TAM fraction per sample 
+```{r fig.width=5, fig.height=5}
+## Fraction of TAM 
+
+samp=unique(as.character(tmp4[tmp4$Fraction=='Tumor','sample']))
+sample.pal <- setNames(sample(rainbow(length(samp))),samp)
+
+
+dat_TAM=tmp4[tmp4[,'annot']=='TAM',]
+dat_TAM=dat_TAM[dat_TAM[,'Fraction']=='Tumor',]
+score=dat_TAM$pc.of.sample
+names(score)=dat_TAM$sample
+
+par(mar=c(8,6,1,1))
+barplot(sort(score),las=2,ylab='Fraction of TAM',col=sample.pal[names(sort(score))],cex.names = 1,cex.lab=1.4)
+
+pdf('TAM_faction.pdf',height=5,width=4.3)
+par(mar=c(8,6,1,1))
+barplot(sort(score),las=2,ylab='Fraction of TAM',col=sample.pal[names(sort(score))],cex.names = 1,cex.lab=1.4)
+dev.off()
+
+
+
+#  Fraction of TIM 
+dat_TIM=tmp4[tmp4[,'annot']=='TIM' & tmp4[,'Fraction']=='Tumor',]
+
+score=dat_TIM$pc.of.sample
+names(score)=dat_TIM$sample
+
+par(mar=c(8,6,1,1))
+barplot(sort(score),las=2,ylab='Fraction of TIM',col=sample.pal[names(sort(score))],cex.names = 1,cex.lab=1.4)
+
+pdf('TIM_faction.pdf',height=5,width=4.3)
+par(mar=c(8,6,1,1))
+barplot(sort(score),las=2,ylab='Fraction of TIM',col=sample.pal[names(sort(score))],cex.names = 1,cex.lab=1.4)
+dev.off()
+
+```
+
+
+
+embedding of cell density 
+```{r fig.width=8, fig.height=2.1}
+
+plotlis=list()
+
+for( iterm in c( "Benign", "Distal","Involved","Tumor")){
+  
+  #iterm='Begin'
+  data2=myeloid_emb[names(fraction[fraction==iterm]),]
+  colnames(data2)=c('x','y')
+  data2=as.data.frame(data2)
+
+  # raster polygon
+  xlims=c(min(myeloid_emb[,1])+0.3,max(myeloid_emb[,1])+0.1)
+  ylims=c(min(myeloid_emb[,2])+0.3,max(myeloid_emb[,2])+0.1)
+  gg=ggplot(data2, aes(x=x, y=y) ) + xlim(xlims) + ylim(ylims)+
+    # theme_classic() +
+    theme_bw() +
+    theme(
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      panel.border = element_blank(),
+      panel.background = element_blank()) +
+    stat_density_2d(aes(fill = ..density..), geom = "raster", contour = FALSE)  +xlab('')+ylab('')+
+    # scale_fill_distiller(palette='Blues', direction=0.1,expand = c(0, 0))+   # +ggtitle(iterm)
+    scale_fill_viridis(option='B',alpha = 1,direction=1) +  #ggtitle(iterm)+
+    # scale_color_brewer(palette = "Dark2", direction=-1)+
+    geom_point(aes(x=x,y=y), col='#FCFDBFFF',size=0.00001,alpha=0.2)+
+    theme(
+      legend.position='none',
+      panel.border = element_blank(),
+      plot.margin = margin(0,0,0,0,"cm")
+    )
+  
+  gg=gg+theme(axis.title.y = element_text(margin = margin(t = 0, r = 0, b = 0, l = 0)))
+  #+grids(linetype = "dashed")
+
+  gg <- gg + theme(axis.title.x=element_blank(),
+                   # axis.text.x=element_text(size=7,margin = margin(0, unit = "cm")),
+                   axis.text.x=element_blank(),
+                   axis.ticks.x=element_line(),
+                   axis.title.y=element_blank(),
+                   axis.ticks.y=element_blank(),
+                   # axis.text.y=element_text(size=7,margin = margin(0, unit = "cm")),
+                   axis.text.y=element_blank(),
+                   axis.ticks.length = unit(0, "cm")
+        )
+  
+
+  con.color <- 'gray40'
+  con.size=0.5
+  cl='white'
+  gg=gg+geom_path(aes(x, y), data=CmDC,col=myeloid.col['mDC'],linetype = 2,size=0.8)+
+    geom_path(aes(x, y), data=Ctim,col=myeloid.col['TIM'],linetype = 2,size=0.8)+
+    geom_path(aes(x, y), data=Ctam,col=myeloid.col['TAM'],linetype = 2,size=0.8)+
+    geom_path(aes(x, y), data=Cmono2,col=myeloid.col['Mono-2'],linetype = 2,size=0.8)+
+    geom_path(aes(x, y), data=Cmono3,col=myeloid.col['Mono-3'],linetype = 2,size=0.8)+
+    
+    geom_path(aes(x, y), data=Cmono1,col=myeloid.col['Mono-1'],linetype = 2,size=0.8)
+
+  ggsave(paste(iterm,'.density.pdf',sep=''),gg,width = 2.5,height=2.5)
+  
+  
+  plotlis[[iterm]]=gg
+}
+
+
+b=  cowplot::plot_grid(plotlist=plotlis, ncol=4, nrow=1)
+
+b
+
+ggsave('F2.b.density.pdf',b,width = 10,height=2.5)
+
+```
+
+
+Marker gene expression 
+```{r fig.width=5, fig.height=5}
+
+gs=c('CD14','LYZ','CTSS','FCGR3A','OSM','PTGS2','C1QA','CD68','CD1C')
+
+
+lcol=3
+lrow=3
+lis=list()
+for (gene in gs){
+  print(gene)
+  t=p2$counts[names(anoCell),gene]
+  alpha =0.2
+  a=scon$plotGraph(colors =t,alpha =0.8,plot.na=F,size=0.1)
+  if (gene %in% c('CTSS','LYZ')){
+    t2=scale(t)
+    names(t2)=names(t)
+    t2[t2<0]=0
+    a=scon$plotGraph(colors =t2,alpha =0.8,plot.na=F,size=0.05)
+  }
+  
+  if (gene %in% c('FCGR3A','PTGS2')){
+    a=a+ xlim(xlims) + ylim(ylims)+annotate("text", x = 3.95, y=6.9, label = gene,size=4.2)
+  }else if(gene %in% c('LYZ','OSM')){
+    a=a+ xlim(xlims) + ylim(ylims)+annotate("text", x = 3.7, y=6.9, label = gene,size=4.2)
+  }
+  else{
+    a=a+annotate("text", x = 3.76, y=6.9, label = gene,size=4.2)+ xlim(xlims) + ylim(ylims)
+    
+  }
+  lis[[gene]]=a
+}
+b=  cowplot::plot_grid(plotlist=lis, ncol=lrow, nrow=lcol)
+
+b
+
+ggsave('F3.markerGene3.png',b,width = 2*lcol,height=2*lrow)
+
+```
+
+
+signature score 
+```{r}
+
+# @param  aexp expression matrix; row is cell, coloum is gene
+# @param sample.cell ratio of sampling cell size,  range from 0 to 1 
+# @param  sample.gs  ratio of sampling gene number ,  range from 0 to 1 
+Signature_score=function(anoCell,m2,aexp,fraction,anoSample,min.num.cell=10,magnitude.normal = NULL,sample.cell=NULL,sample.gs=NULL){
+  m2=intersect(m2,colnames(aexp))
+  cname=names(anoCell)
+  
+  if (!is.null(sample.cell)){
+    sample.cell=ceiling(length(cname)*sample.cell)
+    print(sample.cell)
+    cname=sample(cname,sample.cell)
+  }
+  
+  if (!is.null(sample.gs)){
+    sample.gs=ceiling(length(gs)*sample.gs)
+    m2=sample(m2,sample.gs)
+  }
+  
+  
+  exp=as.matrix(aexp[cname,m2])
+  
+  mmax=apply(exp,2,function(x) max(x))
+  exp=exp[,mmax>0]
+  
+  if (!is.null(magnitude.normal)) {
+    exp = apply(exp, 2, function(x) x/max(x))
+  }  
+  m2score=rowMeans(as.matrix(exp))
+  summary(m2score)
+  
+  m2score_scale=scale(m2score)
+  names(m2score_scale)=names(m2score)
+  print(summary(m2score))
+  
+  cname=names(m2score)
+  
+  
+  ttype=paste(anoCell[cname],'|',anoSample[cname],'|',fraction[cname],sep='')
+  names(ttype)=cname
+  
+  if (!is.null(min.num.cell)){
+    sel= table(ttype) %>% .[.>min.num.cell] %>% names()
+    ttype=ttype[ttype %in% sel]
+  }
+ # print(table(ttype))
+  
+  m2score=m2score[names(ttype)]
+  score.sample=tapply(m2score,ttype,mean)
+  
+  ano=lapply(sn(names(score.sample)),function(x) strsplit(x,'[|]')[[1]])
+  cell=unlist(lapply(ano,function(x) x[1]))
+  anoSample=unlist(lapply(ano,function(x) x[2]))
+  faction=unlist(lapply(ano,function(x) x[3]))
+  
+  dat2=data.frame('score'=score.sample,'cell'=cell,'fraction'=faction,'sample'=anoSample)
+  dat2$name=paste(as.character(dat2[,'cell']),as.character(dat2[,'sample']))
+  dat2$fraction=ordered(as.factor(dat2$fraction), levels = levels(fraction))   
+  dat2$cell=ordered(as.factor(dat2$cell), levels = levels(anoCell))   
+  
+  dat2=dat2[dat2$fraction=='Tumor',]
+  return(dat2)
+}
+  
+
+
+
+
+drawBoxplot=function(tmp,name2,myeloid.col,limHeight=1.5,dsize=3,sigl=NULL,height=3.3,width=2.5,ysize=11,xsize=11){
+  # limHeight=1.45
+  t=tapply(tmp$score , tmp$cell,median)
+  nn=names(t)[which.max(t)]
+  
+  # filter significant pairs 
+  sig=compare_means(score ~ cell,  data = tmp)
+  write.table(sig,paste(name2,'.pvalue.xls',sep=''),col.names=T,row.names=F,quote=F,sep='\t')
+  sig=sig[sig$p.signif!='ns',]
+
+  if (!is.null(sigl)){
+    
+    sig=sig[sig$group1 %in% sigl,]
+    sig=sig[sig$group2 %in% sigl,]
+  }
+  
+  siglis=split(sig, seq(nrow(sig)))
+  pair=lapply(siglis,function(x) as.character(x[,2:3]))
+  
+  p1 <- ggplot(tmp, aes(x=cell,fill=cell,y=score)) + geom_boxplot(outlier.shape = -1,width=0.5,position=position_dodge(width=0.1)) +theme_classic() + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + xlab("")  + ylab(name2)
+  p1=p1+ geom_point(data = tmp,,color=adjustcolor(1,alpha=0.3), position = position_jitterdodge(0.3)) +
+    stat_compare_means(comparisons = pair,label = "p.signif",hide.ns=TRUE,size=dsize,tip.lengt=0.01,bracket.size =0.3,label.y.npc = "bottom")  #+ # Add pairwise comparisons p-value
+  
+  p1=p1+ylim(c(min(tmp$score)*.7,max(tmp$score)*limHeight))
+  #p1=p1+ geom_point(data = tmp,color=adjustcolor(1,alpha=0.3),fill='grey', size = 1, shape = 21)
+  p1=p1+ theme(legend.position="none")
+  p1=p1+theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  p1=p1+theme( axis.text.y = element_text(angle = 45, hjust = 0.5,color = "black"),axis.text.x=element_text(size=xsize,color = "black"),axis.title.y = element_text(size = ysize,color = "black"))
+ 
+  if (!is.null(myeloid.col)){
+    p1=p1+scale_fill_manual(values=myeloid.col)
+  }
+  
+  
+  ggsave(paste(name2,'.score.pvalue.pdf',sep=''),p1,w=width,h=height)
+  saveRDS(tmp,paste(name2,'.dat.rds',sep=''))
+  
+  #p1 <- ggplot(tmp, aes(x=cell,fill=cell,y=score)) + geom_boxplot(outlier.shape = -1,width=0.5,position=position_dodge(width=0.1)) +theme_classic() + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + xlab("")  + ylab(name2)
+  #p1=p1+ geom_point(data = tmp,,color=adjustcolor(1,alpha=0.3), position = position_jitterdodge(0.3)) + scale_fill_manual(values=myeloid.col)
+  #p1=p1+ theme(legend.position="none")+ylim(c(min(tmp$score)*.7,max(tmp$score)*1.4))
+  #p1
+  #ggsave(paste(name2,'.score.pdf',sep=''),p1,w=width,h=height)
+  #print(p1) 
+  return(p1)  
+}
+
+# load signature gene list (utils.R)
+glist=getMarkers()
+```
+
+
+load signature genes and run signature score 
+```{r fig.width=5, fig.height=5}
+
+
+
+# M2 score 
+ylab='M2 score'
+nname=names(fraction[fraction=='Tumor'])
+df=Signature_score(anoCell[nname],glist$M2,p2$counts,fraction,samplef,min.num.cell=5,magnitude.normal = TRUE)
+#drawBoxplot(df,ylab,myeloid.col)   # fraction.palette
+drawBoxplot(df,ylab,myeloid.col,limHeight=1.2,sigl=c('TAM','TIM','Mono-1'),height=2.7,width=2.4)
+
+
+# Inflammatory signature
+ylab='Inflammatory signature'
+nname=names(fraction[fraction=='Tumor'])
+df=Signature_score(anoCell[nname],glist$TIM,p2$counts,fraction,samplef,min.num.cell=5,magnitude.normal = TRUE)
+#drawBoxplot(df,ylab,myeloid.col)   # fraction.palette
+drawBoxplot(df,ylab,myeloid.col,limHeight=1.2,sigl=c('TAM','TIM','Mono-1'),height=2.7,width=2.4)
+
+
+##  Monocytes differentiation 
+
+ylab='Monocytes signature (GSE5099)' # (GSE5099)
+df=Signature_score(anoCell,glist$GSE5099_Mono,p2$counts,fraction,samplef,min.num.cell=5,magnitude.normal = TRUE)
+#drawBoxplot(df,ylab,myeloid.col)   # fraction.palette
+drawBoxplot(df,ylab,myeloid.col,limHeight=1.2,sigl=c('TAM','TIM','Mono-1'),height=3,width=2.4)
+
+
+
+ylab='Macrophage signature (GSE5099)' #(GSE5099)
+df=Signature_score(anoCell,glist$GSE5099_Macro,p2$counts,fraction,samplef,min.num.cell=5,magnitude.normal = TRUE)
+#drawBoxplot(df,ylab,myeloid.col)   # fraction.palette
+drawBoxplot(df,ylab,myeloid.col,limHeight=1.2,sigl=c('TAM','TIM','Mono-1'),height=3,width=2.4)
+
+
+
+
+ylab='Monocytes signature (GSE8286)'
+df=Signature_score(anoCell,glist$GSE8286_Mono,p2$counts,fraction,samplef,min.num.cell=5,magnitude.normal = TRUE)
+#drawBoxplot(df,ylab,myeloid.col)   # fraction.palette
+drawBoxplot(df,ylab,myeloid.col,limHeight=1.2,sigl=c('TAM','TIM','Mono-1'),height=3,width=2.4)
+
+
+
+ylab='Macrophage signature (GSE8286)'
+df=Signature_score(anoCell,glist$GSE8286_Macro,p2$counts,fraction,samplef,min.num.cell=5,magnitude.normal = TRUE)
+drawBoxplot(df,ylab,myeloid.col)   # fraction.palette
+p1=drawBoxplot(df,ylab,myeloid.col,limHeight=1.2,sigl=c('TAM','TIM','Mono-1'),height=3,width=2.4)
+
+```
+
+
+
+correlation between TIM/TAM abundance and CCL20 expression 
+```{r fig.width=5, fig.height=3.8}
+
+library(ggrepel)
+
+
+scell='TAM'
+ccl20=p2$counts[names(anoCell),'CCL20']
+nname=names(anoCell[anoCell==scell])
+anoSample=samplef[nname]
+tab=table(anoSample) %>% .[.>5] %>% names()
+anoSample=anoSample[anoSample %in% tab]
+#table(anoSample)
+
+ccl20=ccl20[names(anoSample)]
+Mexp=tapply(ccl20,anoSample,mean)
+ratio=tmp3[scell,names(Mexp)]
+
+
+
+#dat1=data.frame('expression'=Mexp,'proportion'=ratio,'num'=log(as.numeric(table(anoSample)[names(Mexp)])+1) )
+
+dat1=data.frame('expression'=Mexp,'proportion'=ratio,'Fraction'=tmp3[scell,names(Mexp)] )
+
+dat1$fraction=apply(data.frame(rownames(dat1)),1,function(x) strsplit(x,'-')[[1]][2])
+
+ct <- cor.test(dat1$proportion,dat1$expression,alternative='greater')
+gg <- ggplot(dat1, aes(x=proportion, y=expression)) + theme_bw()+ labs(x='TAM abundance',y='CCL20 expression')+
+  geom_point(aes(color=fraction,size=Fraction)) +
+  #geom_smooth(method="loess", se=F) 
+  geom_smooth(method='lm',colour="#b6ba82",fill = "#ccd9d7")+
+  xlab("TAM abundance") + ylab("CCL20 expression") +
+  #geom_text(x=-Inf,y=Inf,label=paste('R=',round(ct$estimate,2),' ','p=',round(ct$p.value,2),sep=''),hjust=-0.05,vjust=1.2,size=3.5)
+ # geom_text(x=0.2,y=0.7,label=paste('R=',round(ct$estimate,2),' ','p=',round(ct$p.value,2),sep=''),hjust=-0.05,vjust=1.2,size=3.5)
+  geom_text(x=-Inf,y=Inf,label=paste('R=',round(ct$estimate,2),' ','p=',round(ct$p.value,2),sep=''),hjust=-0.05,vjust=1.2,size=3.5)
+
+gg
+
+pdf(paste(scell,'.pdf',sep=''),height=3,width=4.3)
+plot(gg)
+dev.off()
+
+
+```
+
+
+TIM abundance and CCL20 expression 
+```{r fig.width=5, fig.height=3.8}
+
+
+scell='TIM'
+ccl20=p2$counts[names(anoCell),'CCL20']
+nname=names(anoCell[anoCell==scell])
+anoSample=samplef[nname]
+tab=table(anoSample) %>% .[.>5] %>% names()
+anoSample=anoSample[anoSample %in% tab]
+#table(anoSample)
+
+ccl20=ccl20[names(anoSample)]
+Mexp=tapply(ccl20,anoSample,mean)
+ratio=tmp3[scell,names(Mexp)]
+
+
+#plot(Mexp,ratio)
+
+#dat1=data.frame('expression'=Mexp,'proportion'=ratio,'num'=log(as.numeric(table(anoSample)[names(Mexp)])+1) )
+
+dat1=data.frame('expression'=Mexp,'proportion'=ratio,'Fraction'=tmp3[scell,names(Mexp)] )
+
+dat1$fraction=apply(data.frame(rownames(dat1)),1,function(x) strsplit(x,'-')[[1]][2])
+
+
+df=dat1
+df$sample=rownames(df)
+ct <- cor.test(df$proportion,df$expression,alternative='greater')
+p1 <- ggplot(df, aes(x=proportion,y=expression)) + geom_point(aes(color=fraction,size=Fraction))  +
+  geom_smooth(method='lm',linetype='dashed',alpha=0.15,size=0.5) + theme_bw() +
+  theme(axis.text.y=element_text(angle=90))  + guides(color=F) + #geom_text_repel(aes(color=sample))
+  xlab("TAM abundance") + ylab("CCL20 expression") +
+  geom_text(x=-Inf,y=Inf,label=paste('R=',round(ct$estimate,2),' ','p=',round(ct$p.value,2),sep=''),hjust=-0.05,vjust=1.2,size=3.5)
+
+p1
+
+pdf(file='TIM.pdf',height=3,width=4.3); print(p1); dev.off();
+
+```
+
+
+CCL20 expression 
+```{r fig.width=5, fig.height=5}
+
+
+getExp_Sample=function(aexp,gene,group,anoSample,fraction,min.num.cell=5,scale=NULL){
+  # exp colname is gene 
+  
+  cname=intersect(names(group),names(fraction))
+  
+  gexp=aexp[gene,cname]
+  
+  ttype=paste(group[cname],'|',anoSample[cname],'|',fraction[cname],sep='')
+  names(ttype)=cname
+  
+  if (!is.null(min.num.cell)){
+    sel= table(ttype) %>% .[.>min.num.cell] %>% names()
+    ttype=ttype[ttype %in% sel]
+  }
+  
+  cname=names(ttype)
+  Mexp=tapply(gexp[cname],ttype,mean)
+  
+  if (!is.null(scale)){ 
+    score_Mexp = scale(Mexp)
+    names(score_Mexp) = names(Mexp)
+    Mexp=score_Mexp
+  }
+  ano=lapply(sn(names(Mexp)),function(x) strsplit(x,'[|]')[[1]])
+  group=unlist(lapply(ano,function(x) x[1]))
+  anoSample=unlist(lapply(ano,function(x) x[2]))
+  fraction=unlist(lapply(ano,function(x) x[3]))
+  
+  dat2=data.frame('score'=Mexp,'group'=group,'sample'=anoSample,'fraction'=fraction)
+  return(dat2) 
+}
+
+
+
+
+aexp=t(p2$counts)
+
+
+df=getExp_Sample(aexp,'CCL20',anoCell,samplef,fraction[fraction=='Tumor'],min.num.cell=10,scale=NULL)
+
+dat2 = data.frame(score = df[['score']], cell = df[['group']], sample = df[['sample']] , type = df[['fraction']])
+
+
+drawBoxplot(dat2,'CCL20 expression',myeloid.col)
+
+```
+
+
+run differential expressed genes fo different subpopulation
+```{r fig.width=5, fig.height=5}
+cytokine=readRDS('/d0-mendel/home/meisl/bin/data/cytokine.rds')
+
+# sicne TIM and TAM are specific in Tumor fraction, run DE genes in tumor fraction 
+cname=names(anoCell)
+cname=cname[grepl('Tumor',cname)]
+bigM=t(p2$misc$rawCounts)[,cname]
+anoM=anoCell[cname]
+
+p2Mnew=basicP2proc(bigM,min.cells.per.gene = 0,n.cores = 12)
+def=p2Mnew$getDifferentialGenes(groups=anoM,z.threshold = (-30000),append.auc = TRUE)
+
+def1=p2Mnew$getDifferentialGenes(groups=anoM[anoM!='TAM'],z.threshold = (-30000),append.auc = TRUE)
+def2=p2Mnew$getDifferentialGenes(groups=anoM[anoM!='TIM'],z.threshold = (-30000),append.auc = TRUE)
+
+def$TIM=def1$TIM
+def$TAM=def2$TAM
+
+```
+
+
+```{r fig.width=5, fig.height=5}
+
+tmp=def[['TIM']]
+inter=intersect(cytokine,rownames(tmp))
+tmp=tmp[inter,]
+tmp=tmp[order(tmp$Z,decreasing = TRUE),]
+
+
+cols=c('brown1','chartreuse','blue','darkgoldenrod1','darkolivegreen1','grey')
+
+#pdf('ranks.TIM.pdf',height=4,width=4)
+
+plot(tmp[,1],frame.plot = FALSE,cex.lab=1.1,cex.axis=1.1,pch=19,xlab='Cytokine',ylab='Z score')
+
+points(1:6,tmp[1:6,1],col=cols[1:6],pch=19)
+
+legend('topright', as.character(tmp[1:6,'Gene']),bty = "n",border=NA,col=cols[1:6],pt.bg =cols[1:6],box.lty=0,pch=19)
+
+#dev.off()
+
+```

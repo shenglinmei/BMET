@@ -1,0 +1,321 @@
+---
+title: "R Avearge signature score "
+output: html_notebook
+---
+
+# load data 
+```{r}
+source('/d0-mendel/home/meisl/Workplace/BMME/Figures/revision/Lib.r')
+source('/d0-mendel/home/meisl/Workplace/BMME/Figures/revision/utils.R')
+
+#load('/d0-mendel/home/meisl/Workplace/BMME/Figures/revision/F2/F2.sample.RData')
+library(ggpubr)
+
+
+```
+
+#  caculate avearge expression of signature gene set
+```{r}
+
+#' caculate avearge expression of signature gene set
+#' @param anoCell factor of cell types
+#' @param m2 signature gene set
+#' @param aexp expression matrix 
+#' @param fraction factor of fractions
+#' @param anoSample vector of samples 
+#' @param Bootstraps.quantile.cell  sampling cell  
+#' @param Bootstraps.quantile.gs  sampling gene set  
+
+Signature_score=function(anoCell,m2,aexp,fraction,anoSample,min.num.cell=10,magnitude.normal = NULL,Bootstraps.quantile.cell=NULL,Bootstraps.quantile.gs=NULL){
+  m2=intersect(m2,colnames(aexp))
+  cname=names(anoCell)
+  if (!is.null(Bootstraps.quantile.cell)){
+    Bootstraps.quantile.cell=ceiling(length(cname)*Bootstraps.quantile.cell)
+    print(Bootstraps.quantile.cell)
+    set.seed(sample(10000,1))
+    cname=sample(cname,Bootstraps.quantile.cell,replace=T)
+  }
+  
+  if (!is.null(Bootstraps.quantile.gs)){
+    set.seed(sample(10000,1))
+    Bootstraps.quantile.gs=ceiling(length(m2)*Bootstraps.quantile.gs)
+    m2=sample(m2,Bootstraps.quantile.gs,replace=T)
+    set.seed(NULL)
+    
+  }
+  
+  
+  exp=as.matrix(aexp[cname,m2])
+  print(dim(exp))
+  mmax=apply(exp,2,function(x) max(x))
+  exp=exp[,mmax>0]
+  
+  if (!is.null(magnitude.normal)) {
+    exp = apply(exp, 2, function(x) x/max(x))
+  }  
+  m2score=rowMeans(as.matrix(exp))
+  summary(m2score)
+  
+  m2score_scale=scale(m2score)
+  names(m2score_scale)=names(m2score)
+  print(summary(m2score))
+  
+  cname=names(m2score)
+  
+  
+  ttype=paste(anoCell[cname],'|',anoSample[cname],'|',fraction[cname],sep='')
+  names(ttype)=cname
+  
+  if (!is.null(min.num.cell)){
+    sel= table(ttype) %>% .[.>min.num.cell] %>% names()
+    ttype=ttype[ttype %in% sel]
+  }
+  # print(table(ttype))
+  
+  m2score=m2score[names(ttype)]
+  score.sample=tapply(m2score,ttype,mean)
+  
+  ano=lapply(sn(names(score.sample)),function(x) strsplit(x,'[|]')[[1]])
+  cell=unlist(lapply(ano,function(x) x[1]))
+  anoSample=unlist(lapply(ano,function(x) x[2]))
+  faction=unlist(lapply(ano,function(x) x[3]))
+  
+  dat2=data.frame('score'=score.sample,'cell'=cell,'fraction'=faction,'sample'=anoSample)
+  dat2$name=paste(as.character(dat2[,'cell']),as.character(dat2[,'sample']))
+  dat2$fraction=ordered(as.factor(dat2$fraction), levels = levels(fraction))   
+  dat2$cell=ordered(as.factor(dat2$cell), levels = levels(anoCell))   
+  
+  #dat2=dat2[dat2$fraction=='Tumor',]
+  return(dat2)
+}
+
+
+
+SignatureScoreBootstraps<-function(anoCell,m2,aexp,fraction,anoSample,min.num.cell=10,magnitude.normal = NULL,n.bootstraps=0,Bootstraps.quantile.cell=NULL,Bootstraps.quantile.gs=NULL,Bootstraps.cutoff=0.99){
+  #nname=names(fraction[fraction=='Tumor'])
+  #m2=glist$TIM
+  #Bootstraps.quantile.gs=NULL
+  #Bootstraps.quantile.cell=0.9
+  #n.bootstraps=2000
+  #Bootstraps.cutoff=0.99
+  
+  df=Signature_score(anoCell[nname],glist$TIM,p2$counts,fraction,samplef,min.num.cell=5,magnitude.normal = TRUE)
+  fsig=compare_means(score ~ cell,  data = df)
+  fsig=as.data.frame(fsig)
+  rownames(fsig)=paste(fsig$group1,fsig$group2)
+  
+  fscore <- mclapply(sn(seq(n.bootstraps)), function(p) {
+    df=Signature_score(anoCell[nname],m2,p2$counts,fraction,samplef,min.num.cell=5,magnitude.normal = TRUE,
+                       Bootstraps.quantile.cell=Bootstraps.quantile.cell,Bootstraps.quantile.gs=Bootstraps.quantile.gs)
+    sig=compare_means(score ~ cell,  data = df)
+    sig=as.data.frame(sig)
+    rownames(sig)=paste(sig$group1,sig$group2)
+    list('sig'=sig)
+  },mc.cores=32)
+  
+  
+  Bootstraps.pvalue=unlist(lapply(sn(rownames(fsig)),function(x) {
+    t.score=unlist(lapply(fscore,function(d) d$sig[x,'p']))
+    quantile(t.score,Bootstraps.cutoff)
+    }))
+  
+  
+  fsig$Bootstraps.pvalue=Bootstraps.pvalue
+  
+  return(list('df'=df,'fsig'=fsig))
+}
+
+
+
+```
+
+
+
+# test on TIM signature socre (tumor fraction)
+ Inflammatory signature are significant high in TIM population 
+```{r fig.width=5, fig.height=5}
+nname=names(fraction[fraction=='Tumor'])
+table(anoCell[nname])
+
+df=Signature_score(anoCell[nname],glist$TIM,p2$counts,fraction,samplef,min.num.cell=5,magnitude.normal = TRUE)
+
+ylab='Inflammatory signature'
+fsig=compare_means(score ~ cell,  data = df)
+fsig
+
+
+
+```
+
+
+plot
+```{r fig.width=5, fig.height=5}
+p=drawBoxplot(df,ylab,myeloid.col)   # fraction.palette
+
+```
+
+
+
+
+# Bootstraps for cell size 
+3000 times  
+```{r}
+
+sel=c('Mono-1 Mono-2','Mono-1 Mono-3','Mono-2 Mono-3','Mono-2 TIM','Mono-3 TIM','Mono-1 TIM')
+
+df2=SignatureScoreBootstraps(anoCell[nname],glist$TIM,p2$counts,fraction,samplef,min.num.cell=5,magnitude.normal = TRUE,n.bootstraps=3000,Bootstraps.quantile.cell=1,Bootstraps.quantile.gs=NULL,Bootstraps.cutoff=0.99)
+df2$fsig[sel,c('group1','group2','p','Bootstraps.pvalue')]
+
+```
+
+
+# Bootstraps for cell size 
+5000 times 
+
+```{r fig.width=5, fig.height=5}
+
+
+df2=SignatureScoreBootstraps(anoCell[nname],glist$TIM,p2$counts,fraction,samplef,min.num.cell=5,magnitude.normal = TRUE,n.bootstraps=3000,Bootstraps.quantile.cell=1,Bootstraps.quantile.gs=NULL,Bootstraps.cutoff=0.99)
+df2$fsig[sel,c('group1','group2','p','Bootstraps.pvalue')]
+
+```
+
+
+
+
+# Bootstraps for gene num 
+3000 times
+
+```{r}
+
+df2=SignatureScoreBootstraps(anoCell[nname],glist$TIM,p2$counts,fraction,samplef,min.num.cell=5,magnitude.normal = TRUE,n.bootstraps=3000,Bootstraps.quantile.cell=NULL,Bootstraps.quantile.gs=1,Bootstraps.cutoff=0.99)
+df2$fsig[sel,c('group1','group2','p','Bootstraps.pvalue')]
+
+```
+
+
+
+
+
+
+
+
+
+#  diagnose figure 
+```{r}
+  nname=names(fraction[fraction=='Tumor'])
+  m2=glist$TIM
+  Bootstraps.quantile.gs=NULL
+  Bootstraps.quantile.cell=1
+  n.bootstraps=2000
+  Bootstraps.cutoff=0.99
+  Bootstraps.quantile.gs=NULL
+  
+  df=Signature_score(anoCell[nname],glist$TIM,p2$counts,fraction,samplef,min.num.cell=5,magnitude.normal = TRUE)
+  fsig=compare_means(score ~ cell,  data = df)
+  fsig=as.data.frame(fsig)
+  rownames(fsig)=paste(fsig$group1,fsig$group2)
+  
+  fscore <- mclapply(sn(seq(n.bootstraps)), function(p) {
+    df=Signature_score(anoCell[nname],m2,p2$counts,fraction,samplef,min.num.cell=5,magnitude.normal = TRUE,
+                       Bootstraps.quantile.cell=Bootstraps.quantile.cell,Bootstraps.quantile.gs=Bootstraps.quantile.gs)
+    sig=compare_means(score ~ cell,  data = df)
+    sig=as.data.frame(sig)
+    rownames(sig)=paste(sig$group1,sig$group2)
+    list('sig'=sig)
+  },mc.cores=32)
+  
+  
+  
+```
+
+```{r}
+
+lis=list()
+lis[['Mono1 vs Mono2']]=-log10(unlist(lapply(fscore,function(x) x$sig[1,'p'])))
+lis[['Mono1 vs Mono3']]=-log10(unlist(lapply(fscore,function(x) x$sig[2,'p'])))
+lis[['Mono2 vs TIM']]=-log10(unlist(lapply(fscore,function(x) x$sig[8,'p'])))
+lis[['Mono3 vs TIM']]=-log10(unlist(lapply(fscore,function(x) x$sig[11,'p'])))
+
+
+
+
+mat=do.call(cbind,lis)
+colnames(mat)=names(lis)
+dat=melt(mat)
+
+
+p1 <- ggplot(dat, aes(x=Var2,fill=Var2,y=value)) + geom_boxplot(outlier.shape = -1,width=0.5,position=position_dodge(width=0.3)) +theme_classic() + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + xlab("")  + ylab('-log 10 Pvalue')+ theme(legend.position="none")
+p1=p1+ geom_point(data = dat,color=adjustcolor(1,alpha=0.3),size=0.1, position = position_jitterdodge(0.3)) 
+p1
+
+```
+
+# test on M2 signature socre (tumor fraction)
+
+```{r}
+nname=names(fraction[fraction=='Tumor'])
+table(anoCell[nname])
+
+df=Signature_score(anoCell[nname],glist$M2,p2$counts,fraction,samplef,min.num.cell=5,magnitude.normal = TRUE)
+
+ylab='Inflammatory signature'
+fsig=compare_means(score ~ cell,  data = df)
+fsig
+```
+
+
+plot
+```{r fig.width=5, fig.height=5}
+p=drawBoxplot(df,ylab,myeloid.col)   # fraction.palette
+
+```
+
+
+
+
+
+
+
+
+# Bootstraps for cell size 
+3000 times
+```{r}
+
+sel=c('Mono-1 Mono-2','Mono-1 Mono-3','Mono-2 Mono-3','Mono-2 TAM','Mono-3 TAM','Mono-1 TAM')
+
+df2=SignatureScoreBootstraps(anoCell[nname],glist$M2,p2$counts,fraction,samplef,min.num.cell=5,magnitude.normal = TRUE,n.bootstraps=3000,Bootstraps.quantile.cell=1,Bootstraps.quantile.gs=NULL,Bootstraps.cutoff=0.99)
+df2$fsig[sel,c('group1','group2','p','Bootstraps.pvalue')]
+
+```
+
+5000 times
+
+```{r}
+sel=c('Mono-1 Mono-2','Mono-1 Mono-3','Mono-2 Mono-3','Mono-2 TAM','Mono-3 TAM','Mono-1 TAM')
+
+df2=SignatureScoreBootstraps(anoCell[nname],glist$M2,p2$counts,fraction,samplef,min.num.cell=5,magnitude.normal = TRUE,n.bootstraps=5000,Bootstraps.quantile.cell=1,Bootstraps.quantile.gs=NULL,Bootstraps.cutoff=0.99)
+df2$fsig[sel,c('group1','group2','p','Bootstraps.pvalue')]
+```
+
+
+
+# Bootstraps for  gene num 
+
+3000 times 
+
+```{r}
+
+df2=SignatureScoreBootstraps(anoCell[nname],glist$M2,p2$counts,fraction,samplef,min.num.cell=5,magnitude.normal = TRUE,n.bootstraps=3000,Bootstraps.quantile.cell=NULL,Bootstraps.quantile.gs=1,Bootstraps.cutoff=0.99)
+df2$fsig[sel,c('group1','group2','p','Bootstraps.pvalue')]
+
+```
+
+
+
+
+
+
+
+

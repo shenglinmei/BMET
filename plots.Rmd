@@ -1,0 +1,699 @@
+---
+title: "BM revision plots"
+output: html_notebook
+---
+
+```{r}
+library(pagoda2)
+library(conos)
+library(Matrix)
+library(parallel)
+library(cowplot)
+```
+
+
+
+Load original conos object and annotations
+
+```{r}
+scon <- Conos$new(readRDS("~pkharchenko/m/scadden/bmmet/jan2019/scon.rds"))
+load("~pkharchenko/m/scadden/bmmet/jan2019/annotations.RData")
+typefc <- readRDS("/d0-mendel/home/meisl/Workplace/BMME/Figures/data/cell.ano.merged.rds")
+typefc.pal <- readRDS("/d0-mendel/home/meisl/Workplace/BMME/Figures/data/cellType.color.rds")
+```
+
+
+Look at the coarse annotation:
+```{r fig.width=5, fig.height=5}
+alpha <- 0.1; size <- 0.2; 
+p1 <- scon$plotGraph(groups=typefc,palette=typefc.pal,alpha=alpha,size=size,mark.groups=T,plot.na=F)
+p1
+```
+
+
+
+Look at the detailed annotation:
+
+```{r fig.width=5, fig.height=5}
+alpha <- 0.1; size <- 0.2; 
+p2 <- scon$plotGraph(groups=typef,alpha=alpha,size=size,mark.groups=T,plot.na=F)
+p2
+```
+
+
+```{r fig.width=5, fig.height=5}
+alpha <- 0.1; size <- 0.2; 
+scon$plotGraph(gene='MDM4',alpha=0.4,size=size,mark.groups=T,plot.na=F)
+```
+
+### Doublets
+
+```{r}
+source("~/m/pavan/DLI/conp2.r")
+dl <- lapply(scon$samples,function(x) t(x$misc$rawCounts));
+
+ds <- mclapply(dl,get.scrublet.scores,mc.cores=30)
+doublet.f <- setNames(unlist(ds),unlist(lapply(ds,names)))
+```
+
+```{r fig.width=5, fig.height=5}
+alpha <- 0.1; size <- 0.2; 
+scon$plotGraph(groups=as.factor(doublet.f[names(doublet.f) %in% names(typef)]>0.25),palette=c("TRUE"='red','FALSE'='gray70'),alpha=alpha,size=size,mark.groups=F,plot.na=F)
+```
+
+```{r fig.width=5, fig.height=5}
+alpha <- 0.1; size <- 0.2; 
+p1 <- scon$plotGraph(groups=typefc[doublet.f[names(typefc)]<=0.25],palette=typefc.pal,alpha=alpha,size=size,mark.groups=T,plot.na=F)
+p1
+```
+
+
+### Marker genes
+
+Marker genes
+```{r}
+nfac <- as.factor(typefc[doublet.f[names(typefc)]<=0.25])
+```
+
+```{r}
+annot.de <- scon$getDifferentialGenes(groups=nfac,n.cores=30,append.auc=TRUE,z.threshold=0,upregulated.only=T)
+```
+
+
+```{r fig.width=12,fig.height=12}
+#source("~/m/p2/conos/R/plot.R")
+pp <- plotDEheatmap(scon,nfac,annot.de,n.genes.per.cluster = 20 ,show.gene.clusters=T,column.metadata=list(samples=scon$getDatasetPerCell()),order.clusters = T, column.metadata.colors = list(clusters=typefc.pal),use_raster = T,raster_device = "CairoPNG")
+pdf(file='annot.heatmap.pdf',width=10,height=30); print(pp); dev.off();
+```
+
+A small version of the hetmap, for the main figure
+```{r fig.width=6,fig.height=8}
+source("~/m/p2/conos/R/plot.R")
+genes <- c('MS4A1','CD79A','CD79B','MZB1','VPREB3','SEC11C','IGLL5','GNLY','GZMB','LILRA4','AZU1','MPO','FCN1','IER3','C5AR1','IGJ','SOX4','STMN1','MYL9','HBD','GZMK','AR','KLK2')
+pp <- plotDEheatmap(scon,nfac,annot.de,n.genes.per.cluster = 20 ,show.gene.clusters=T, column.metadata.colors = list(clusters=typefc.pal), order.clusters = T, additional.genes = genes, labeled.gene.subset = genes, min.auc = 0.6,use_raster = T,raster_device = "CairoPNG")
+pp
+```
+
+
+
+
+
+```{r fig.width=5, fig.height=5}
+alpha <- 0.5; size <- 0.1; 
+scon$plotGraph(gene='KLK2',alpha=alpha,size=size,mark.groups=F,plot.na=F)
+```
+
+### Sample panel:
+```{r fig.height=24, fig.width=12}
+pp <- scon$plotPanel(groups=nfac,plot.na=F,alpha=0.3,size=0.5,use.common.embedding = F, ncol=4, mark.groups=T,palette=typefc.pal,raster=T, raster.width=3,raster.height=3,title.size=4,font.size=c(3,4))
+#pdf('panel.pdf',height=8,width=2); print(pp); dev.off();
+pp
+```
+
+
+Just the Tumor fractions
+```{r fig.height=10, fig.width=10}
+pl <- lapply(grep("Tumor",names(scon$samples),val=T),function(nam) {
+  sccore::embeddingPlot(ncon$samples[[nam]]$embeddings$PCA$tSNE,groups=nfac,palette=typefc.pal,plot.na=F,raster=T,raster.height=3,raster.width=3,font.size=c(3,4)) + ggtitle(nam) +theme_bw() + theme(legend.position = "none") + theme(axis.ticks = element_blank(), axis.title = element_blank(), axis.text = element_blank(),panel.grid.major = element_blank(), panel.grid.minor=element_blank())
+})
+plot_grid(plotlist=pl,nrow=3)
+```
+
+```{r fig.height=10, fig.width=10}
+pl <- lapply(grep("Tumor",names(scon$samples),val=T),function(nam) {
+  sccore::embeddingPlot(ncon$samples[[nam]]$embeddings$PCA$tSNE,colors=conos:::getGeneExpression(ncon$samples[[nam]],'KLK2'),plot.na=F,raster=T,raster.height=3,raster.width=3,font.size=c(3,4)) + ggtitle(nam) +theme_bw() + theme(legend.position = "none") + theme(axis.ticks = element_blank(), axis.title = element_blank(), axis.text = element_blank(),panel.grid.major = element_blank(), panel.grid.minor=element_blank())
+})
+plot_grid(plotlist=pl,nrow=3)
+```
+
+## Expression difference magnitude analysis
+An extended version, non-paired comparisons. 
+
+```{r}
+source("~pkharchenko/m/p2/comp/cacoa/R/expression_shifts.R")
+
+samplegroups <- list(
+  Benign = grep("-Whole",names(scon$samples),val=T),
+  Tumor = grep("-Tumor",names(scon$samples),val=T)
+)
+sgf <- setNames(rep(names(samplegroups),unlist(lapply(samplegroups,length))),unlist(samplegroups))
+
+xTB <- estimateExpressionShiftMagnitudes(lapply(scon$samples,conos:::getRawCountMatrix),sample.groups=sgf,cell.groups=nfac,dist='JS',n.cells=500,n.subsamples=100,min.cells=10,n.cores=30) 
+xTBc <- estimateExpressionShiftMagnitudes(lapply(scon$samples,conos:::getRawCountMatrix),sample.groups=sgf,cell.groups=nfac,dist='cor',n.cells=500,n.subsamples=100,min.cells=10,n.cores=30) 
+
+
+samplegroups <- list(
+  Benign = grep("-Whole",names(scon$samples),val=T),
+  Tumor = grep("-Involved",names(scon$samples),val=T)
+)
+sgf <- setNames(rep(names(samplegroups),unlist(lapply(samplegroups,length))),unlist(samplegroups))
+
+xIB <- estimateExpressionShiftMagnitudes(lapply(scon$samples,conos:::getRawCountMatrix),sample.groups=sgf,cell.groups=nfac,dist='JS',n.cells=500,n.subsamples=100,min.cells=10,n.cores=30) 
+xIBc <- estimateExpressionShiftMagnitudes(lapply(scon$samples,conos:::getRawCountMatrix),sample.groups=sgf,cell.groups=nfac,dist='cor',n.cells=500,n.subsamples=100,min.cells=10,n.cores=30) 
+
+samplegroups <- list(
+  Benign = grep("-Noninvolved",names(scon$samples),val=T),
+  Tumor = grep("-Involved",names(scon$samples),val=T)
+)
+sgf <- setNames(rep(names(samplegroups),unlist(lapply(samplegroups,length))),unlist(samplegroups))
+
+xID <- estimateExpressionShiftMagnitudes(lapply(scon$samples,conos:::getRawCountMatrix),sample.groups=sgf,cell.groups=nfac,dist='JS',n.cells=500,n.subsamples=100,min.cells=10,n.cores=30) 
+xIDc <- estimateExpressionShiftMagnitudes(lapply(scon$samples,conos:::getRawCountMatrix),sample.groups=sgf,cell.groups=nfac,dist='cor',n.cells=500,n.subsamples=100,min.cells=10,n.cores=30) 
+
+
+samplegroups <- list(
+  Involved = grep("-Involved",names(scon$samples),val=T),
+  Tumor = grep("-Tumor",names(scon$samples),val=T)
+)
+sgf <- setNames(rep(names(samplegroups),unlist(lapply(samplegroups,length))),unlist(samplegroups))
+
+xIT <- estimateExpressionShiftMagnitudes(lapply(scon$samples,conos:::getRawCountMatrix),sample.groups=sgf,cell.groups=nfac,dist='JS',n.cells=500,n.subsamples=100,min.cells=10,n.cores=30) 
+xITc <- estimateExpressionShiftMagnitudes(lapply(scon$samples,conos:::getRawCountMatrix),sample.groups=sgf,cell.groups=nfac,dist='cor',n.cells=500,n.subsamples=100,min.cells=10,n.cores=30) 
+
+
+
+samplegroups <- list(
+  Distal = grep("-Noninvolved",names(scon$samples),val=T),
+  Tumor = grep("-Tumor",names(scon$samples),val=T)
+)
+sgf <- setNames(rep(names(samplegroups),unlist(lapply(samplegroups,length))),unlist(samplegroups))
+
+xTD <- estimateExpressionShiftMagnitudes(lapply(scon$samples,conos:::getRawCountMatrix),sample.groups=sgf,cell.groups=nfac,dist='JS',n.cells=500,n.subsamples=100,min.cells=10,n.cores=30) 
+xTDc <- estimateExpressionShiftMagnitudes(lapply(scon$samples,conos:::getRawCountMatrix),sample.groups=sgf,cell.groups=nfac,dist='cor',n.cells=500,n.subsamples=100,min.cells=10,n.cores=30) 
+
+
+```
+
+JS-based distances
+```{r fig.height=8,fig.width=12}
+rlist <- list("Tumor vs. Benign"=xTB,"Involved vs. Benign"=xIB,"Tumor vs. Involved"=xIT,"Tumor vs. Distal"=xTD,"Involved vs. Distal"=xID)
+pl <- lapply(names(rlist),function(nam) { 
+  ggplot(rlist[[nam]]$df,aes(x=as.factor(Type),y=value)) + 
+    geom_boxplot(notch=T,outlier.shape=NA) + 
+    geom_jitter(position=position_jitter(0.1), aes(color=patient),show.legend=FALSE,alpha=0.1) + 
+    geom_hline(yintercept = 1,linetype=2,color='gray80') +
+    ylim(0,min(5,max(rlist[[nam]]$df$value)))+
+    theme(axis.text.x=element_text(angle = 90, hjust=1), axis.text.y=element_text(angle=90, hjust=0.5)) +
+    ggtitle(nam)+
+    labs(x="", y="normalized distance")
+})
+plot_grid(plotlist=pl,nrow=2)
+```
+Correlation-based figure
+```{r fig.height=8,fig.width=7}
+rlist <- list("Tumor vs. Benign"=xTBc,"Involved vs. Benign"=xIBc,"Tumor vs. Distal"=xTDc,"Involved vs. Distal"=xIDc)
+pl <- lapply(names(rlist),function(nam) { 
+  ggplot(rlist[[nam]]$df,aes(x=as.factor(Type),y=value)) + 
+    geom_boxplot(notch=T,outlier.shape=NA) + 
+    geom_jitter(position=position_jitter(0.1), aes(color=patient),show.legend=FALSE,alpha=0.1) + 
+    geom_hline(yintercept = 1,linetype=2,color='gray80') +
+    #ylim(0,min(5,max(rlist[[nam]]$df$value)))+
+    ylim(0,5)+
+    theme(axis.text.x=element_text(angle = 90, hjust=1), axis.text.y=element_text(angle=90, hjust=0.5)) +
+    ggtitle(nam)+
+    labs(x="", y="standardized distance")
+})
+pp <- plot_grid(plotlist=pl,nrow=2)
+pdf(file='difference.magnitudes.pdf',width=7,height=8); print(pp); dev.off();
+pp
+```
+
+
+
+
+
+
+## Realignment of the Tumor fraction without translation/mitochondrial genes
+
+```{r}
+p2l <- lapply(lapply(dl,function(x) x[,!doublet.f[colnames(x)]>0.25]), basicP2proc, n.cores=30, min.cells.per.gene=0,min.transcripts.per.cell=1e3, n.odgenes=2e3, get.largevis=FALSE, make.geneknn=FALSE)
+```
+
+Remove translation and respiratory chain genes that are bringing tumor cells close to progentiors
+```{r}
+library(biomaRt)
+ensembl = useMart("ensembl",dataset="hsapiens_gene_ensembl")
+#gene.data <- getBM(attributes=c('hgnc_symbol'),filters = 'go', values = "GO:0000280", mart = ensembl)
+
+#getBM(attributes = c('entrezgene_id','hgnc_symbol'), filters = 'go', values = 'GO:0000278', mart = ensembl)
+#getBM(attributes = c('entrezgene_id','hgnc_symbol'), filters = 'go', values = 'GO:0006260', mart = ensembl)
+tr.genes <- getBM(attributes = c('entrezgene_id','hgnc_symbol'), filters = 'go', values = c('GO:0006412','GO:0006414','GO:0022904','GO:0055114','GO:0070125','GO:0006839'), mart = ensembl)
+tr.genes <- tr.genes$hgnc_symbol
+saveRDS(tr.genes,file='tr.genes.rds')
+```
+
+```{r}
+tr.genes <- readRDS("tr.genes.rds")
+p2l <- lapply(lapply(dl,function(x) x[!rownames(x) %in% tr.genes,!doublet.f[colnames(x)]>0.25]), basicP2proc, n.cores=30, min.cells.per.gene=0,min.transcripts.per.cell=1e3, n.odgenes=2e3, get.largevis=FALSE, make.geneknn=FALSE)
+```
+
+
+
+Conos integration of only tumor fractions:
+```{r}
+ncon <- Conos$new(p2l[grepl("Tumor",names(p2l))],n.cores=30)
+#ncon$buildGraph(k=15, k.self=5, space='CPCA', ncomps=30, n.odgenes=2000, verbose=TRUE)
+#ncon$buildGraph(k=15, k.self=5, space='CCA', ncomps=30, n.odgenes=2000, verbose=TRUE)
+ncon$buildGraph(k=15, k.self=5, space='PCA', ncomps=30, n.odgenes=2000, verbose=TRUE)
+ncon$embedGraph(method='UMAP');
+# store different embeddings
+ncon$misc$embeddings <- list()
+ncon$misc$embeddings$umap <- ncon$embedding
+ncon$embedGraph(sgd_batches=2e8,apha=1.5);
+ncon$misc$embeddings$lv <- ncon$embedding
+
+ncon$findCommunities(method=leiden.community,resolution=1)
+```
+
+Take a look
+```{r fig.width=10, fig.height=10}
+alpha <- 0.1; size <- 0.5; 
+ncon$embedding <- ncon$misc$embeddings$umap
+n1 <- ncon$plotGraph(groups=typefc,palette=typefc.pal,alpha=alpha,size=size,mark.groups=T,plot.na=F)
+n2 <- ncon$plotGraph(groups=typef,alpha=alpha,size=size,mark.groups=T,plot.na=F,font.size=c(3,5))
+#n3 <- ncon$plotGraph(groups=ncon$getDatasetPerCell(),alpha=alpha,size=size,mark.groups=F,plot.na=F)
+n3 <- ncon$plotGraph(alpha=alpha,size=size,mark.groups=T,plot.na=F)
+plot_grid(plotlist=list(p1,n1,n2,n3),nrow=2)
+```
+
+
+```{r fig.width=3, fig.height=3}
+alpha <- 0.1; size <- 0.3; 
+n1 <- ncon$plotGraph(groups=typefc,palette=typefc.pal,alpha=alpha,size=size,mark.groups=T,plot.na=F,font.size=c(3,4),raster=T,raster.width=3,raster.height=3)
+pdf(file='tumor.nometab.embedding.pdf',width=3,height=3); print(n1); dev.off();
+n1
+```
+
+```{r fig.width=12, fig.height=6}
+alpha <- 0.2; size <- 0.1; 
+#n1 <- ncon$plotGraph(groups=typefc,palette=typefc.pal,alpha=alpha,size=size,mark.groups=T,plot.na=F)
+n2 <- ncon$plotGraph(groups=typef,alpha=alpha,size=size,mark.groups=T,plot.na=F,font.size=c(3,4))
+n3 <- ncon$plotGraph(gene='KLK2',alpha=alpha,size=size,mark.groups=F,plot.na=F)
+plot_grid(plotlist=list(n2,n3),nrow=1)
+```
+
+
+Contrast tumor cluster against progenitor cluster 38
+```{r}
+
+x <- ncon$clusters[[1]]$groups
+tumor.cells <- names(x)[x==42]
+prog.cells <- names(x)[x==38]
+
+
+unfac <- typefc[doublet.f[names(typefc)]<=0.25]
+unfac[names(unfac)%in% tumor.cells] <- 'Tumor'
+unfac <- as.factor(unfac)
+
+
+
+tfac <- ncon$getDatasetPerCell()
+tfac <- tfac[!names(tfac) %in% prog.cells]
+tfac <- as.factor(setNames(ifelse(names(tfac) %in% tumor.cells,'tumor','other'),names(tfac)))
+
+tumor.de <- ncon$getDifferentialGenes(groups=tfac,n.cores=30,append.auc=TRUE,z.threshold=0,upregulated.only=T)
+
+
+pfac <- ncon$getDatasetPerCell()
+pfac <- pfac[!names(pfac) %in% tumor.cells]
+pfac <- as.factor(setNames(ifelse(names(pfac) %in% prog.cells,'prog','other'),names(pfac)))
+
+prog.de <- ncon$getDifferentialGenes(groups=pfac,n.cores=30,append.auc=TRUE,z.threshold=0,upregulated.only=T)
+
+
+cfac <- ncon$getDatasetPerCell()
+cfac <- as.factor(setNames(ifelse(names(cfac) %in% c(prog.cells,tumor.cells),'comb','other'),names(cfac)))
+
+comb.de <- ncon$getDifferentialGenes(groups=cfac,n.cores=30,append.auc=TRUE,z.threshold=0,upregulated.only=T)
+
+# try with the entire progenitor population, balancing sizes
+cfac <- ncon$getDatasetPerCell()
+x <- names(typefc)[typefc=="Progenitors"];
+xs <- sample(x,length(tumor.cells))
+pfac <- pfac[!names(pfac) %in% setdiff(x,xs)]
+cfac <- as.factor(setNames(ifelse(names(cfac) %in% c(xs,tumor.cells),'comb','other'),names(cfac)))
+
+comb.de2 <- ncon$getDifferentialGenes(groups=cfac,n.cores=30,append.auc=TRUE,z.threshold=0,upregulated.only=T)
+
+
+```
+
+
+Top tumor markers
+```{r}
+require(dplyr)
+tde <- arrange(tumor.de$tumor,by=desc(AUC))
+tde
+```
+
+```{r}
+pde <- arrange(prog.de$prog,by=desc(AUC))
+pde
+```
+
+
+```{r}
+arrange(comb.de$comb,by=desc(AUC))
+```
+
+```{r}
+arrange(comb.de2$comb,by=desc(AUC))
+```
+
+```{r}
+write(as.character(head(comb.de2$comb,300)$Gene),file='comb2.top300.txt',sep='\n')
+write(unique(unlist(lapply(comb.de2,function(x) as.character(x$Gene)))),file='background.txt',sep='\n')
+```
+
+
+```{r fig.width=5, fig.height=5}
+alpha <- 0.1; size <- 0.2; 
+scon$plotGraph(gene='BLNK',alpha=0.4,size=size,mark.groups=T,plot.na=F)
+```
+
+
+Look at the intersecting genes
+```{r}
+tde <- arrange(tumor.de$tumor,by=desc(Z))
+pde <- arrange(prog.de$prog,by=desc(Z))
+x <- intersect(head(tde,500)$Gene,head(pde,500)$Gene)
+write(x,file='intersect.txt',sep='\n')
+```
+
+
+
+
+```{r fig.width=8, fig.height=8}
+alpha <- 0.1; size <- 0.2; 
+ncon$embedding <- ncon$misc$embeddings$umap
+n1 <- scon$plotGraph(groups=unfac,palette=typefc.pal,alpha=alpha,size=size,mark.groups=T,plot.na=F)
+n1
+```
+
+```{r fig.height=10, fig.width=10}
+pl <- lapply(grep("Tumor",names(scon$samples),val=T),function(nam) {
+  sccore::embeddingPlot(ncon$samples[[nam]]$embeddings$PCA$tSNE,groups=unfac,palette=typefc.pal,plot.na=F,raster=T,raster.height=3,raster.width=3,font.size=c(3,4)) + ggtitle(nam) +theme_bw() + theme(legend.position = "none") + theme(axis.ticks = element_blank(), axis.title = element_blank(), axis.text = element_blank(),panel.grid.major = element_blank(), panel.grid.minor=element_blank())
+})
+plot_grid(plotlist=pl,nrow=3)
+```
+
+
+
+## Look at Eli's genes
+
+```{r}
+qplot <- function(g, con.obj=con, ann=con$clusters$leiden$groups ) {
+  #cat(g,' ')
+  x <- lapply(con.obj$samples[!grepl("Whole|Noninv",names(con.obj$samples))],function(r) { if(g %in% colnames(r$counts)) { r$counts[,g] } else { return(NULL) } })
+  if(length(unlist(x))<1) stop('gene ',g,' is not found')
+  df <- data.frame(val=unlist(x),cell=unlist(lapply(x,names)))
+  df$cluster <- ann[match(df$cell,names(ann))]
+  df <- na.omit(df)
+  
+  mv <- max(tapply(df$val,df$cluster,quantile,p=0.8),tapply(df$val,df$cluster,mean))*1.5
+  p <- ggplot(df,aes(x=cluster,y=val,color=cluster))+geom_boxplot(outlier.shape = NA)+ stat_summary(fun.data=mean_se,geom="pointrange", color="black")+ylab(g)+ggtitle(g)+guides(colour=FALSE)+ theme(axis.text.x = element_text(angle = 90, hjust = 1,vjust=0.5))+coord_cartesian(ylim=c(0,mv));
+  p
+}
+```
+
+
+```{r fig.width=10,fig.height=25}
+eli.genes <- c("CXCR4",'GZMB','GZMA','PDCD1','HAVCR2','TIGIT','LAG3','TCF7','ENTPD1','GNLY','CX3CR1','PRF1','SLAMF6')
+pl <- lapply(eli.genes,qplot,con.obj=scon,ann=typef)
+cowplot::plot_grid(plotlist=pl,ncol=2)
+```
+
+
+
+```{r}
+qplot('TGFB2',scon,ann=typef)
+```
+
+
+### Extended differential expression tests
+
+Extend the getPerCellTypeDE function to perform per-sample Wilcoxon test, bootstrap resampled test, as well as a combined Wilcoxon test.
+
+```{r}
+
+# given a vector of Z scores from resamplign rounds, returns a conservative lower bound of the Z score using a specified quantile (reproducibility power)
+conservative.Z <- function(z, quantile) {
+  bq <- as.numeric(sort(quantile(z,p=c(quantile,1-quantile))))
+  if(sign(bq[1])!=sign(bq[2])) return(0) # confidence interval includes 0
+  return(bq[which.min(abs(bq))])
+}
+
+# given a vector of p-values from resampling rounds, returns an upper bound based on the desired quantile
+conservative.pval <- function(pval, quantile) {
+  as.numeric(max(quantile(pval,p=c(quantile,1-quantile))))
+}
+
+# cm - expression matrix with rows being cells
+# cols - a factor on the rows (must match order)
+# return: raw and adjusted Z scores
+rowWiseWilcoxonTest <- function(cm, cols, lower.lpv.limit=-100) {
+  # run wilcoxon test comparing each group with the rest
+  # calculate rank per-column (per-gene) average rank matrix
+  xr <- pagoda2:::sparse_matrix_column_ranks(cm);
+  # calculate rank sums per group
+  grs <- pagoda2:::colSumByFac(xr,as.integer(cols))[-1,,drop=F]
+  # calculate number of non-zero entries per group
+  xr@x <- numeric(length(xr@x))+1
+  gnzz <- pagoda2:::colSumByFac(xr,as.integer(cols))[-1,,drop=F]
+  #group.size <- as.numeric(tapply(cols,cols,length));
+  group.size <- as.numeric(tapply(cols,cols,length))[1:nrow(gnzz)]; group.size[is.na(group.size)]<-0; # trailing empty levels are cut off by colSumByFac
+  # add contribution of zero entries to the grs
+  gnz <- (group.size-gnzz)
+  # rank of a 0 entry for each gene
+  zero.ranks <- (nrow(xr)-diff(xr@p)+1)/2 # number of total zero entries per gene
+  ustat <- t((t(gnz)*zero.ranks)) + grs - group.size*(group.size+1)/2
+  # standardize
+  n1n2 <- group.size*(nrow(cm)-group.size);
+  # usigma <- sqrt(n1n2*(nrow(cm)+1)/12) # without tie correction
+  # correcting for 0 ties, of which there are plenty
+  usigma <- sqrt(n1n2*(nrow(cm)+1)/12)
+  usigma <- sqrt((nrow(cm) +1 - (gnz^3 - gnz)/(nrow(cm)*(nrow(cm)-1)))*n1n2/12)
+  z <- t((ustat - n1n2/2)/usigma); # standardized U value- z score
+
+  cz <- matrix(qnorm(pagoda2:::bh.adjust(pnorm(as.numeric(abs(z)), lower.tail = FALSE, log.p = TRUE), log = TRUE), lower.tail = FALSE, log.p = TRUE),ncol=ncol(z))*sign(z)
+  rownames(z) <- rownames(cz) <- colnames(cm); colnames(z) <- colnames(cz) <- levels(cols)[1:ncol(z)];
+  return(list(z=z,cz=cz))
+}
+
+#' Do differential expression for each cell type in a conos object between the specified subsets of apps
+#' @param con.obj conos object
+#' @param groups factor specifying cell types
+#' @param sample.groups a list of two character vector specifying the app groups to compare
+#' @param cooks.cutoff cooksCutoff for DESeq2
+#' @param independent.filtering independentFiltering for DESeq2
+#' @param n.cores number of cores
+#' @param cluster.sep.chr character string of length 1 specifying a delimiter to separate cluster and app names
+#' @param return.details return detals
+#' @export getPerCellTypeDE
+getPerCellTypeDE2 <- function(con.obj, groups=NULL, sample.groups=NULL, cooks.cutoff = FALSE, ref.level = NULL, min.cell.count = 10,
+                             independent.filtering = FALSE, n.cores=1, cluster.sep.chr = '<!!>',return.details=TRUE, n.bootstraps=0, bootstrap.quantile=0.9) {
+  conos:::validatePerCellTypeParams(con.obj, groups, sample.groups, ref.level, cluster.sep.chr)
+
+  ## Generate a summary dataset collapsing the cells of the same type in each sample
+  ## and merging everything in one matrix
+  cml <- conos:::rawMatricesWithCommonGenes(con.obj, sample.groups)
+  aggr2 <- cml %>% lapply(conos:::collapseCellsByType, groups=groups, min.cell.count=min.cell.count) %>% conos:::rbindDEMatrices(cluster.sep.chr=cluster.sep.chr)
+  
+  # sample groups factor
+  sample.gfac <- setNames(rep(names(sample.groups),unlist(lapply(sample.groups,length))),unlist(sample.groups))
+  # cell sample factor
+  samf <- setNames(rep(names(cml),unlist(lapply(cml,nrow))),unlist(lapply(cml,rownames)))
+  # cell groups factor
+  cell.gfac <- setNames(sample.gfac[samf],names(samf))
+  
+  ## For every cell type get differential expression results
+  de.res <- conos:::papply(conos:::sn(levels(groups)), function(l) {
+    tryCatch({
+      ## Get count matrix
+      cm <- aggr2[,strpart(colnames(aggr2),cluster.sep.chr,2,fixed=TRUE) == l]
+      ## Generate metadata
+      meta <- data.frame(
+        sample.id= colnames(cm),
+        group= as.factor(unlist(lapply(colnames(cm), function(y) {
+          y <- strpart(y,cluster.sep.chr,1,fixed=TRUE)
+          names(sample.groups)[unlist(lapply(sample.groups,function(x) any(x %in% y)))]
+        })))
+      )
+      if (!ref.level %in% levels(meta$group))
+        stop('The reference level is absent in this comparison')
+      meta$group <- relevel(meta$group, ref=ref.level)
+      if (length(unique(as.character(meta$group))) < 2)
+        stop('The cluster is not present in both conditions')
+      dds1 <- DESeq2::DESeqDataSetFromMatrix(cm,meta,design=~group)
+      dds1 <- DESeq2::DESeq(dds1)
+      res1 <- DESeq2::results(dds1, cooksCutoff = cooks.cutoff, independentFiltering = independent.filtering)
+      res1 <- as.data.frame(res1)
+      
+      
+      # filter cml to leave only the cells of that type and drop the samples with insufficient cells
+      cmlf <- lapply(cml,function(cm) {
+        vc <- intersect(rownames(cm), names(groups)[groups==l])
+        if(length(vc)<min.cell.count) return(NULL)
+        cm[vc,,drop=F]
+      })
+      cmlf <- cmlf[!unlist(lapply(cmlf,is.null))]
+      
+      # dataset-wise wilcoxon test
+      x <- rowWiseWilcoxonTest(as(t(cm),'dgCMatrix'), as.factor(meta$group))
+      res1$wZ <- -x$z[,ref.level]
+      res1$wZadj <- -x$cz[,ref.level]
+      #res1$wP <- pmin(pnorm(x$z[,ref.level]),pnorm(x$z[,ref.level],lower.tail=F))
+      #res1$wPadj <- pmin(pnorm(x$cz[,ref.level]),pnorm(x$cz[,ref.level],lower.tail=F))
+      
+      # resampled dataset-wise wilcoxon tests
+      if(n.bootstraps>0) {
+        xx <- lapply(1:n.bootstraps,function(i) {
+          cm <- do.call(rbind,lapply(cmlf,function(x) colSums(x[sample(rownames(x),replace = T),])))
+          rowWiseWilcoxonTest(as(cm,'dgCMatrix'), as.factor(sample.gfac[rownames(cm)]))
+        })
+        xx <- do.call(rbind,lapply(xx,function(x) x$z[,ref.level]))
+        
+        res1$bwZ <- -apply(xx,2,conservative.Z,quantile=bootstrap.quantile)
+        
+        res1$bwZadj <- qnorm(pagoda2:::bh.adjust(pnorm(as.numeric(abs(res1$bwZ)), lower.tail = FALSE, log.p = TRUE), log = TRUE), lower.tail = FALSE, log.p = TRUE)*sign(res1$bwZ)
+      }
+      
+      # cell-wise wilcoxon test
+      cm2 <- do.call(rbind,cmlf)
+      x <- rowWiseWilcoxonTest(cm2, as.factor(cell.gfac[rownames(cm2)]))
+      # res1$cwP <- pmin(pnorm(x$z[,ref.level]),pnorm(x$z[,ref.level],lower.tail=F))
+      # res1$cwPadj <- pmin(pnorm(x$cz[,ref.level]),pnorm(x$cz[,ref.level],lower.tail=F))
+      res1$cwZ <- -x$z[,ref.level]
+      res1$cwZadj <- -x$cz[,ref.level]
+      
+      res1 <- res1[order(res1$padj,decreasing = FALSE),]
+          
+      gc()
+      ##
+      if(return.details) {
+        list(res=res1, cm=cm, sample.groups=sample.groups)
+      } else {
+        res1
+      }
+    }, error=function(err) {warning("Error for level ", l, ": ", err$message); return(NA)})
+  }, n.cores=n.cores)
+  
+  de.res
+}
+```
+
+
+
+```{r}
+samplegroups <- list(
+  Benign = grep("-Whole",names(scon$samples),val=T),
+  Tumor = grep("-Tumor",names(scon$samples),val=T)
+)
+
+de.info2  <- getPerCellTypeDE2(scon, groups=nfac, sample.groups = samplegroups, ref.level='Benign', n.cores=30,n.bootstraps=100)
+#saveRDS(de.info2,file='de.TB.rds')
+```
+
+
+
+Writing out JSON files with the updated test info:
+
+```{r}
+source("~pkharchenko/m/pavan/DLI/conp2.r")
+dir.create('json',showWarnings = F)
+# need to get rid of spaces in the names
+names(de.info2) <- gsub(" ","_",names(de.info2))
+
+saveDEasJSON2(de.info2,'json/')
+```
+
+write out link table: note that you'll need to change the location variable to specify where the folder with all the json files and deview.3.html (that has to be copied there manually) will be located on the server:
+```{r}
+# path - local path where to save the TOC file
+# location - web server path where the json files and the toc file will reside
+write.toc.file <- function(de.info,path='json',fname='toc.html',location='http://pklab.med.harvard.edu/peterk/scadden/bmmet/supp/json') {
+  toc.file <- paste(path,fname,sep='/')
+  s <- paste(c(list('<html><head><style>
+table {
+  font-family: arial, sans-serif;
+  border-collapse: collapse;
+  width: 100%;
+}
+
+td, th {
+  border: 1px solid #dddddd;
+  text-align: left;
+  padding: 8px;
+}
+
+tr:nth-child(even) {
+  background-color: #dddddd;
+}
+</style></head><body><table>'),
+suppressWarnings(lapply(names(de.info),function(n) { if(!is.na(de.info[[n]])) { ref <- paste0('<a href="',location,'/deview.3.html?d=',n,'.json">',n,'</a>') } else {ref <- 'NA'}; paste0('<tr><td>',ref,'</td></tr>') })),
+list('</table></body></html>')),collapse='\n')
+  write(s,file=toc.file)
+}
+```
+
+
+```{r}
+write.toc.file(de.info2,path='json',location='http://pklab.med.harvard.edu/peterk/scadden/bmmet/supp/json')
+```
+
+
+Calculate all contrasts:
+```{r}
+samplegroups <- list(
+  Benign = grep("-Whole",names(scon$samples),val=T),
+  Tumor = grep("-Tumor",names(scon$samples),val=T)
+)
+
+de.TB  <- getPerCellTypeDE2(scon, groups=nfac, sample.groups = samplegroups, ref.level='Benign', n.cores=30,n.bootstraps=100)
+saveRDS(de.TB,file='de.TB.rds')
+
+
+samplegroups <- list(
+  Benign = grep("-Whole",names(scon$samples),val=T),
+  Involved = grep("-Involved",names(scon$samples),val=T)
+)
+de.IB  <- getPerCellTypeDE2(scon, groups=nfac, sample.groups = samplegroups, ref.level='Benign', n.cores=30,n.bootstraps=100)
+
+samplegroups <- list(
+  Distal = grep("-Noninvolved",names(scon$samples),val=T),
+  Involved = grep("-Involved",names(scon$samples),val=T)
+)
+de.ID  <- getPerCellTypeDE2(scon, groups=nfac, sample.groups = samplegroups, ref.level='Distal', n.cores=30,n.bootstraps=100)
+
+
+samplegroups <- list(
+  Involved = grep("-Involved",names(scon$samples),val=T),
+  Tumor = grep("-Tumor",names(scon$samples),val=T)
+)
+de.TI  <- getPerCellTypeDE2(scon, groups=nfac, sample.groups = samplegroups, ref.level='Involved', n.cores=30,n.bootstraps=100)
+
+samplegroups <- list(
+  Distal = grep("-Noninvolved",names(scon$samples),val=T),
+  Tumor = grep("-Tumor",names(scon$samples),val=T)
+)
+de.TD  <- getPerCellTypeDE2(scon, groups=nfac, sample.groups = samplegroups, ref.level='Distal', n.cores=30,n.bootstraps=100)
+
+saveRDS(de.TB,file='de.TB.rds')
+saveRDS(de.IB,file='de.IB.rds')
+saveRDS(de.ID,file='de.ID.rds')
+saveRDS(de.TI,file='de.TI.rds')
+saveRDS(de.TD,file='de.TD.rds')
+```
+
+```{r}
+dir.create('json.TB',showWarnings = F)
+saveDEasJSON2(de.TB,'json.TB/')
+dir.create('json.IB',showWarnings = F)
+saveDEasJSON2(de.IB,'json.IB/')
+```
+
+```{r}
+write.toc.file(de.TB,path='json.TB',location='http://pklab.med.harvard.edu/peterk/scadden/bmmet/supp/json.TB')
+write.toc.file(de.IB,path='json.IB',location='http://pklab.med.harvard.edu/peterk/scadden/bmmet/supp/json.IB')
+```
+
