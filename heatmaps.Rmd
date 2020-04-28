@@ -1,0 +1,790 @@
+---
+title: "GO heatmaps and such"
+output: html_notebook
+---
+
+Switch to bioconductor mode
+```{r}
+library(pagoda2)
+library(conos)
+library(parallel)
+library(magrittr)
+library(ggplot2)
+library(pbapply)
+library(tibble)
+library(dplyr)
+library(ggrastr)
+library(cowplot)
+library(ggbeeswarm)
+library(readr)
+library(pheatmap)
+library(reshape2)
+library(clusterProfiler)
+library(DOSE)
+library(org.Hs.eg.db)
+library(enrichplot)
+
+require(ComplexHeatmap)
+require(circlize)
+```
+
+
+Load de results:
+```{r}
+x <- list.files(path='..',pattern='de.*.rds'); names(x) <- gsub("de.(.*).rds","\\1",x)
+del <- lapply(x,function(n) readRDS(paste0('../',n)))
+```
+
+
+
+Prepare GO categories ... 
+```{r}
+ go_datas <- c("BP", "CC", "MF") %>% setNames(., .) %>%
+   pblapply(function(n) clusterProfiler:::get_GO_data(org.Hs.eg.db, n, "ENTREZID") %>%
+              as.list() %>% as.environment()) # otherwise it pass reference to the environment content
+```
+
+Run enrichment tests
+
+```{r}
+enrichGOOpt <- function (gene, OrgDB, goData, keyType = "ENTREZID", ont = "MF", pvalueCutoff = 0.05,
+                         pAdjustMethod = "BH", universe=NULL, qvalueCutoff = 0.2, minGSSize = 10,
+                         maxGSSize = 500, readable = FALSE, pool = FALSE) {
+  ont %<>% toupper %>% match.arg(c("BP", "CC", "MF"))
+
+  res <- clusterProfiler:::enricher_internal(gene, pvalueCutoff = pvalueCutoff,
+                                             pAdjustMethod = pAdjustMethod, universe = universe,
+                                             qvalueCutoff = qvalueCutoff, minGSSize = minGSSize,
+                                             maxGSSize = maxGSSize, USER_DATA = goData)
+  if (is.null(res))
+    return(res)
+
+  res@keytype <- keyType
+  res@organism <- clusterProfiler:::get_organism(OrgDB)
+  if (readable) {
+    res <- DOSE::setReadable(res, OrgDB)
+  }
+  res@ontology <- ont
+
+  return(res)
+}
+
+distanceBetweenTerms <- function(go.df) {
+  genes.per.go <- sapply(go.df$geneID, strsplit, "/") %>% setNames(go.df$Description)
+  all.go.genes <- unique(unlist(genes.per.go))
+  all.gos <- unique(go.df$Description)
+
+  genes.per.go.mat <- matrix(0, length(all.go.genes), length(all.gos)) %>%
+    `colnames<-`(all.gos) %>% `rownames<-`(all.go.genes)
+
+  for (i in 1:length(genes.per.go)) {
+    genes.per.go.mat[genes.per.go[[i]], go.df$Description[[i]]] <- 1
+  }
+
+  return(dist(t(genes.per.go.mat), method="binary"))
+}
+
+```
+
+
+```{r}
+calculate.gos <- function(de,n.top.genes=300,n.cores=1) {
+  de <- de[unlist(lapply(de,is.list))]
+  
+  # add Z scores
+  de <- lapply(de,function(d) {
+    res.table <- d$res;
+    res.table$Z <- -qnorm(res.table$pval/2)
+    res.table$Z[is.na(res.table$Z)] <- 0
+    res.table$Za <- -qnorm(res.table$padj/2)
+    res.table$Za[is.na(res.table$Za)] <- 0
+    res.table$Z <- res.table$Z  * sign(res.table$log2FoldChange)
+    res.table$Za <- res.table$Za  * sign(res.table$log2FoldChange)
+    d$res <- res.table;
+    d
+  })
+  
+  
+  gns <- list(down=lapply(de,function(x) rownames(x$res)[order(x$res$Z,decreasing=F)[1:n.top.genes]]),
+              up=lapply(de,function(x) rownames(x$res)[order(x$res$Z,decreasing=T)[1:n.top.genes]]),
+              all=list(all=unique(unlist(lapply(de,function(x) rownames(x$res))))))
+  
+  gns.entrez <- lapply(gns,function(x) lapply(x, bitr, 'SYMBOL', 'ENTREZID', org.Hs.eg.db) %>% lapply(`[[`, "ENTREZID"))
+  
+  gos <- lapply(gns.entrez[c('up','down')],function(gns) {
+    lapply(gns,enrichGOOpt,universe=gns.entrez$all$all, ont='BP', goData=go_datas[['BP']], readable=T, OrgDB=org.Hs.eg.db)# %>% lapply(function(x) x@result)
+  })
+  
+}
+
+gos.cluster <- function(gos,n.clusters=20,max.pval=0.05) {
+  gos_filt <- lapply(gos,function(x) filter(x@result,p.adjust<max.pval))
+  gos_joint <- do.call(rbind,gos_filt)
+  
+  gos_joint <- gos_filt %>% .[sapply(., nrow) > 0] %>% names() %>% setNames(., .) %>% lapply(function(n) cbind(gos_filt[[n]],Type=n)) %>% Reduce(rbind,.)
+  go_dist <- distanceBetweenTerms(gos_joint)
+  clusts <- hclust(go_dist,method='ward.D2') %>% cutree(n.clusters)
+  gos_per_clust <- split(names(clusts), clusts)
+  ngos_per_clust <- sapply(gos_per_clust, length)
+  #table(clusts)
+  
+  gos_per_clust <- split(names(clusts), clusts)
+  gos_joint %<>% mutate(GOClust=clusts[Description])
+  name_per_clust <- gos_joint %>% group_by(GOClust, Description) %>% summarise(pvalue=exp(mean(log(pvalue)))) %>% 
+    split(.$GOClust) %>% sapply(function(df) df$Description[which.min(df$pvalue)])
+  gos_joint %<>% mutate(GOClustName=name_per_clust[as.character(GOClust)])
+  
+  # cluster summary
+  go_bp_summ_df <- gos_joint %>% group_by(Type, GOClustName) %>% 
+    summarise(p.adjust=min(p.adjust)) %>% ungroup() %>% mutate(p.adjust=-log10(p.adjust)) %>% 
+    tidyr::spread(Type, p.adjust) %>% as.data.frame() %>% set_rownames(.$GOClustName) %>% .[, 2:ncol(.)] #%>% .[, type_order[type_order %in% colnames(.)]]
+  go_bp_summ_df[is.na(go_bp_summ_df)] <- 0
+  
+  return(list(joint=gos_joint,clusters=clusts,summary=go_bp_summ_df))
+}
+
+```
+
+
+Calculate enrichments
+```{r}
+gosl <- lapply(del,calculate.gos)
+```
+
+Calculate and plot clusters:
+```{r}
+cols <- list(up=colorRamp2(c(0, 6), c("grey98", "red")),down=colorRamp2(c(0, 6), c("grey98", "blue")))
+n.clusters <- 20; max.pval <- 0.05;
+```
+
+### Involved vs. Benign
+```{r}
+cx <- lapply(gosl$IB,gos.cluster,n.clusters=n.clusters,max.pval=max.pval)
+```
+
+```{r fig.width=8,fig.height=5}
+mu <- Heatmap(as.matrix(cx$up$summary),col=cols$up,border=T,show_row_dend=F,show_column_dend=F, heatmap_legend_param = list(title = 'Z score'), row_names_max_width = unit(8, "cm"),row_names_gp = gpar(fontsize = 10),)
+md <- Heatmap(as.matrix(cx$down$summary),col=cols$down,border=T,show_row_dend=F,show_column_dend=F, heatmap_legend_param = list(title = 'Z score'), row_names_max_width = unit(8, "cm"),row_names_gp = gpar(fontsize = 10))
+pdf(file='de.IB.up.pdf',width=7,height=4.5); draw(mu, heatmap_legend_side = "left"); dev.off();
+pdf(file='de.IB.down.pdf',width=7,height=4.5); draw(md, heatmap_legend_side = "left"); dev.off();
+mu; md;
+```
+
+
+Figure output with fixed cell type ordering
+
+```{r fig.width=6,fig.height=5}
+ord <- hclust(dist(t(rbind(cx$up$summary,cx$down$summary))))$order;
+mu <- Heatmap(as.matrix(cx$up$summary[,ord]),col=cols$up,border=T,show_row_dend=F,show_column_dend=F, heatmap_legend_param = list(title = 'Z score'), row_names_max_width = unit(8, "cm"),row_names_gp = gpar(fontsize = 10),column_names_gp = gpar(fontsize = 11),cluster_columns=F,show_heatmap_legend =F)
+md <- Heatmap(as.matrix(cx$down$summary[,ord]),col=cols$down,border=T,show_row_dend=F,show_column_dend=F, heatmap_legend_param = list(title = 'Z score'), row_names_max_width = unit(8, "cm"),row_names_gp = gpar(fontsize = 10),column_names_gp = gpar(fontsize = 11),cluster_columns=F,show_heatmap_legend =F)
+pdf(file='de.IB.up.pdf',width=5.5,height=4.5); draw(mu, heatmap_legend_side = "left"); dev.off();
+pdf(file='de.IB.down.pdf',width=5.5,height=4.5); draw(md, heatmap_legend_side = "left"); dev.off();
+mu; md;
+```
+
+
+### Tumor vs. Benign
+```{r}
+cx <- lapply(gosl$TB,gos.cluster,n.clusters=n.clusters,max.pval=max.pval)
+```
+
+```{r fig.width=8,fig.height=5}
+mu <- Heatmap(as.matrix(cx$up$summary),col=cols$up,border=T,show_row_dend=F,show_column_dend=F, heatmap_legend_param = list(title = 'Z score'), row_names_max_width = unit(8, "cm"),row_names_gp = gpar(fontsize = 10),)
+md <- Heatmap(as.matrix(cx$down$summary),col=cols$down,border=T,show_row_dend=F,show_column_dend=F, heatmap_legend_param = list(title = 'Z score'), row_names_max_width = unit(8, "cm"),row_names_gp = gpar(fontsize = 10))
+pdf(file='de.TB.up.pdf',width=7,height=4.5); draw(mu, heatmap_legend_side = "left"); dev.off();
+pdf(file='de.TB.down.pdf',width=7,height=4.5); draw(md, heatmap_legend_side = "left"); dev.off();
+mu; md;
+```
+
+
+### Involved vs. Distal
+```{r}
+cx <- lapply(gosl$ID,gos.cluster,n.clusters=n.clusters,max.pval=max.pval)
+```
+
+```{r fig.width=8,fig.height=5}
+mu <- Heatmap(as.matrix(cx$up$summary),col=cols$up,border=T,show_row_dend=F,show_column_dend=F, heatmap_legend_param = list(title = 'Z score'), row_names_max_width = unit(8, "cm"),row_names_gp = gpar(fontsize = 10),)
+md <- Heatmap(as.matrix(cx$down$summary),col=cols$down,border=T,show_row_dend=F,show_column_dend=F, heatmap_legend_param = list(title = 'Z score'), row_names_max_width = unit(8, "cm"),row_names_gp = gpar(fontsize = 10))
+pdf(file='de.ID.up.pdf',width=7,height=4.5); draw(mu, heatmap_legend_side = "left"); dev.off();
+pdf(file='de.ID.down.pdf',width=7,height=4.5); draw(md, heatmap_legend_side = "left"); dev.off();
+mu; md;
+```
+
+
+Try plotting individual results:
+```{r}
+x <- gosl2$IB$up$Progenitors
+barplot(x, showCategory=20)
+```
+
+
+```{r}
+x <- gosl$IB$up$Progenitors
+p <- dotplot(x, showCategory=20,title='Upregulated in Progenitors') +scale_colour_gradient(low = "red", high = "gray80") +xlab('fraction of genes') +scale_x_continuous(breaks=pretty(unlist(lapply(x@result$GeneRatio[1:20],function(x) eval(parse(text=x)))),3))
+ggsave('IB.Progenitor.up.pdf',width=6,height=6,plot=p)
+p
+```
+
+
+```{r}
+x <- gosl$IB$down$Progenitors
+p <- dotplot(x, showCategory=20,title='Downregulated in Progenitors') +scale_colour_gradient(low = "blue", high = "gray80")+xlab('fraction of genes')+scale_x_continuous(breaks=pretty(unlist(lapply(x@result$GeneRatio[1:20],function(x) eval(parse(text=x)))),3))
+ggsave('IB.Progenitor.down.pdf',width=6,height=6,plot=p)
+p
+```
+
+
+```{r}
+x <- gosl2$IB$up$pDC
+p <- dotplot(x, showCategory=20,title='Upregulated in pDC') +scale_colour_gradient(low = "red", high = "gray80") +xlab('fraction of genes')
+ggsave('IB.pDC.up.pdf',width=8,height=6,plot=p)
+p
+```
+
+
+```{r}
+x <- gosl2$IB$down$pDC
+p <- dotplot(x, showCategory=20,title='Downregulated in pDC') +scale_colour_gradient(low = "blue", high = "gray80")
+ggsave('IB.pDC.down.pdf',width=8,height=6,plot=p)
+p
+```
+
+
+
+### Additional comparisons (paired, corrected)
+Load Shenglin's results
+```{r}
+pw <- '/home/meisl/Workplace/BMME/Revision/DE/'
+x <- list(cTB='de.correction.Tumor.vs.Benign.rds',pID='de.paired.Involved.vs.Distal.rds',pTD='de.paired.Tumor.vs.Distal.rds')
+del2 <- lapply(x,function(x) readRDS(paste0(pw,x)))
+
+del2$pID <- readRDS("../de.pID.rds")
+del2$pTD <- readRDS("../de.pTD.rds")
+
+gosl2 <- lapply(del2,calculate.gos)
+```
+
+
+
+Corrected Tumor vs. Benign
+```{r}
+cx <- lapply(gosl2$cTB,gos.cluster,n.clusters=n.clusters,max.pval=max.pval)
+```
+
+```{r fig.width=8,fig.height=5}
+mu <- Heatmap(as.matrix(cx$up$summary),col=cols$up,border=T,show_row_dend=F,show_column_dend=F, heatmap_legend_param = list(title = 'Z score'), row_names_max_width = unit(8, "cm"),row_names_gp = gpar(fontsize = 10),)
+md <- Heatmap(as.matrix(cx$down$summary),col=cols$down,border=T,show_row_dend=F,show_column_dend=F, heatmap_legend_param = list(title = 'Z score'), row_names_max_width = unit(8, "cm"),row_names_gp = gpar(fontsize = 10))
+pdf(file='de.cTB.up.pdf',width=7,height=4.5); draw(mu, heatmap_legend_side = "left"); dev.off();
+pdf(file='de.cTB.down.pdf',width=7,height=4.5); draw(md, heatmap_legend_side = "left"); dev.off();
+mu; md;
+```
+
+Paired Tumor vs. Distal
+```{r}
+cx <- lapply(gosl2$pTD,gos.cluster,n.clusters=n.clusters,max.pval=max.pval)
+```
+
+```{r fig.width=8,fig.height=5}
+mu <- Heatmap(as.matrix(cx$up$summary),col=cols$up,border=T,show_row_dend=F,show_column_dend=F, heatmap_legend_param = list(title = 'Z score'), row_names_max_width = unit(8, "cm"),row_names_gp = gpar(fontsize = 10),)
+md <- Heatmap(as.matrix(cx$down$summary),col=cols$down,border=T,show_row_dend=F,show_column_dend=F, heatmap_legend_param = list(title = 'Z score'), row_names_max_width = unit(8, "cm"),row_names_gp = gpar(fontsize = 10))
+pdf(file='de.pTD.up.pdf',width=7,height=4.5); draw(mu, heatmap_legend_side = "left"); dev.off();
+pdf(file='de.pTD.down.pdf',width=7,height=4.5); draw(md, heatmap_legend_side = "left"); dev.off();
+mu; md;
+```
+
+
+Paired Involved vs. Distal
+```{r}
+cx <- lapply(gosl2$pID,gos.cluster,n.clusters=n.clusters,max.pval=max.pval)
+```
+
+```{r fig.width=8,fig.height=5}
+mu <- Heatmap(as.matrix(cx$up$summary),col=cols$up,border=T,show_row_dend=F,show_column_dend=F, heatmap_legend_param = list(title = 'Z score'), row_names_max_width = unit(8, "cm"),row_names_gp = gpar(fontsize = 10),)
+md <- Heatmap(as.matrix(cx$down$summary),col=cols$down,border=T,show_row_dend=F,show_column_dend=F, heatmap_legend_param = list(title = 'Z score'), row_names_max_width = unit(8, "cm"),row_names_gp = gpar(fontsize = 10))
+pdf(file='de.pID.up.pdf',width=7,height=4.5); draw(mu, heatmap_legend_side = "left"); dev.off();
+pdf(file='de.pID.down.pdf',width=7,height=4.5); draw(md, heatmap_legend_side = "left"); dev.off();
+mu; md;
+```
+
+
+Redraw heatmaps
+```{r}
+sn <- function(x) setNames(x,x)
+drawOverlapHetmap=function(Defile,dec=NULL,n.top.genes=300){
+  
+  nn=names(Defile)
+  sname=nn[unlist(lapply(Defile, function(x) 'res' %in% names(x)))]
+  
+  
+  glist= lapply(sn(sname), function(x){ 
+    tmp1=Defile[[x]]$res
+    tmp1=addZscore(tmp1,dec=dec)
+    rownames(tmp1)[1:n.top.genes]
+  })
+  
+  Zscore= lapply(sn(sname), function(x){ 
+    tmp1=Defile[[x]]$res
+    tmp1=addZscore(tmp1,dec=dec)
+    ss=tmp1$Z
+    names(ss)=rownames(tmp1)
+    ss
+  })
+  
+  
+  
+  rr=listToOverlapMatrix2(glist)
+  
+  for( i in seq(nrow(rr))){
+    rr[i,i]=NA
+  }
+  
+  rr
+}
+
+addZscore=function(res.table,dec=NULL){
+  res.table$Z <- -qnorm(res.table$pval/2)
+  res.table$Z[is.na(res.table$Z)] <- 0
+  res.table$Za <- -qnorm(res.table$padj/2)
+  res.table$Za[is.na(res.table$Za)] <- 0
+  res.table$Z <- res.table$Z  * sign(res.table$log2FoldChange)
+  res.table$Za <- res.table$Za  * sign(res.table$log2FoldChange)
+  res.table=res.table[order(res.table$Z),]
+  if (!is.null(dec)){
+    res.table=res.table[order(res.table$Z,decreasing=dec),]
+  } else { # otherwise sort by absolute magnitude of Z
+    res.table <- res.table[order(abs(res.table$Z),decreasing=T),]
+  }
+  
+  return(res.table)
+}
+listToOverlapMatrix2=function(res,counts=NULL){
+  
+  
+  lc=length(res)
+  stat=matrix(rep(0,lc*lc),lc,lc)
+  for( i in seq(lc)){
+    for (j in seq(lc)){
+      if( i!=j){
+        stat[i,j]=length(intersect(res[[i]],res[[j]]))/length(union(res[[i]],res[[j]]))
+        if (!is.null(counts)){stat[i,j]=length(intersect(res[[i]],res[[j]])) }
+      }
+    }
+  }
+  colnames(stat)=names(res)
+  rownames(stat)=names(res)
+  return(stat)
+  
+}
+
+```
+
+
+```{r fig.width=6,fig.height=5}
+rr <- drawOverlapHetmap(del$IB,dec=NULL,n.top.genes=300)
+pheatmap(rr,na_col = "gray50",filename='de.IB.overlap.pdf',height=4.3,width=5,treeheight_row=25,treeheight_col=25)
+pheatmap(rr,na_col = "gray50",treeheight_row=25,treeheight_col=25)
+```
+
+Compare pared and regular tests
+```{r}
+x <- del$ID; y <- del2$pID;
+x <- del$TD; y <- del2$pTD; 
+x <- x[unlist(lapply(x,is.list))]
+y <- y[unlist(lapply(y,is.list))]
+sum(unlist(lapply(x,function(x) sum(x$res$pvalue<1e-3,na.rm=T))))
+sum(unlist(lapply(y,function(x) sum(x$res$pvalue<1e-3,na.rm=T))))
+```
+
+# Intra-tumoral heterogeneity
+
+```{r}
+scon <- Conos$new(readRDS("~pkharchenko/m/scadden/bmmet/jan2019/scon.rds"))
+nfac <- readRDS("../nfac.rds")
+#nfac <- readRDS("/d0-mendel/home/meisl/Workplace/BMME/Figures/data/cell.ano.merged.rds")
+```
+
+
+```{r}
+
+
+tumor.cells <- names(nfac)[nfac=='Tumor']
+
+tt <- table(scon$getDatasetPerCell()[tumor.cells])
+valid.samples <- names(tt)[tt>10]
+
+cdl <- lapply(scon$samples[valid.samples],function(x) t(x$misc$rawCounts[rownames(x$misc$rawCounts) %in% tumor.cells,,drop=F]))
+names(cdl) <- gsub("Noninvolved","Distal",names(cdl))
+cdl <- lapply(cdl,function(m) { colnames(m) <- gsub("Noninvolved","Distal",colnames(m)); m})
+
+tp2 <- mclapply(cdl,basicP2proc,  nPcs=3, get.tsne=T, get.largevis=F, make.geneknn=F, trim=0 , min.cells.per.gene = -1, n.cores=1,n.odgenes=1000,mc.cores=30)
+
+```
+
+
+Conos
+```{r}
+tcon <- Conos$new(tp2,n.cores=1)
+tcon$buildGraph(k = 10,k.self = 5,ncomps = 10,metric = 'L2',n.odgenes = 1000)
+
+# store different embeddings
+tcon$misc$embeddings <- list()
+#tcon$embedGraph(method='UMAP');
+#tcon$misc$embeddings$umap <- tcon$embedding
+tcon$embedGraph(sgd_batches=0.1e8,apha=1);
+tcon$misc$embeddings$lv <- tcon$embedding
+
+tcon$findCommunities(method=leiden.community,resolution=0.6)
+```
+
+
+```{r fig.width=8, fig.height=4}
+alpha <- 0.3; size <- 2; 
+tcon$embedding <- tcon$misc$embeddings$lv
+n1 <- tcon$plotGraph(color.by='sample',alpha=alpha,size=size,mark.groups=T,plot.na=F)
+#n2 <- tcon$plotGraph(gene='FOS',alpha=alpha,size=size,mark.groups=F,plot.na=F)
+n2 <- tcon$plotGraph(alpha=alpha,size=size,mark.groups=T,plot.na=F)
+plot_grid(plotlist=list(n1,n2),nrow=1)
+```
+
+```{r fig.width=4, fig.height=4}
+tcon$plotGraph(colors=csm[,4],alpha=alpha,size=size,mark.groups=F,plot.na=F,gradient.range.quantile=0.97)
+```
+
+
+```{r fig.width=4.5, fig.height=3}
+alpha <- 0.3; size <- 2; 
+tcon$embedding <- tcon$misc$embeddings$lv
+n1 <- tcon$plotGraph(color.by='sample',alpha=alpha,size=size,mark.groups=F,plot.na=F)+theme(legend.position = 'right')+ guides(color=guide_legend(title="Sample",override.aes=list(size=5)))
+ggsave('tcon.samples.pdf',n1,width=4.5,height=3)
+n1
+```
+
+
+```{r}
+cm <- do.call(cbind,lapply(conos:::rawMatricesWithCommonGenes(Conos$new(tp2)),function(m) t(m[rownames(m)%in% tumor.cells,,drop=F])))
+tcp2 <- basicP2proc(cm,  nPcs=20, get.tsne=T, get.largevis=F, make.geneknn=F, trim=1 , min.cells.per.gene = 0, n.cores=30,n.odgenes=3000)
+```
+
+```{r fig.width=5,fig.height=5}
+tcp2$plotEmbedding(type='PCA',groups=as.factor(scon$getDatasetPerCell()))
+```
+```{r fig.width=5,fig.height=5}
+conos::embeddingPlot(tcp2$embeddings[[1]]$tSNE,groups=as.factor(scon$getDatasetPerCell()),size=2)
+```
+
+```{r fig.width=5,fig.height=5}
+conos::embeddingPlot(tcp2$embeddings[[1]]$tSNE,colors=csm[,4],gradient.range.quantile=0.97)
+```
+```{r fig.width=5,fig.height=5}
+# epithelial cell differentiation
+# ELF3
+conos::embeddingPlot(tcp2$embeddings[[1]]$tSNE,colors=tcp2$counts[,'SOX9'],gradient.range.quantile=0.97)
+```
+
+Project other datasets to the PCs of each dataset
+```{r}
+common.genes <- Reduce(intersect, lapply(tp2,function(x) colnames(x$counts)))
+
+n.top.pcs <- 1;
+pcl <- lapply(tp2,function(r) { 
+  x <- r$misc$PCA$v[,1:n.top.pcs,drop=F]
+  x <- x[rownames(x) %in% common.genes,,drop=F]
+  x <- t(t(x)/colSums(x*x))
+})
+
+# project
+csm <- do.call(rbind,lapply(tp2,function(r) {
+  x <- r$counts;
+  #x@x <- x@x*rep(r$misc[['varinfo']][colnames(x),'gsf'],diff(x@p)); # apply variance scaling
+  center <- Matrix::colMeans(x)
+  pcs <- do.call(cbind,lapply(pcl,function(pcm) {
+    #z <- pcm[sample(1:nrow(pcm)),,drop=F]; rownames(z) <- rownames(pcm); pcm <- z;
+    pcas <- t(as.matrix(t(x[,rownames(pcm),drop=F] %*% pcm)) - as.vector(t(center[rownames(pcm)] %*% pcm)))
+  }))
+  if(n.top.pcs>1) { colnames(pcs) <- paste(rep(names(pcl),each=n.top.pcs),rep(1:n.top.pcs,length(pcl)),sep='_')} else { colnames(pcs) <- names(pcl)}
+  
+  pcs
+}))
+
+```
+
+Optimize orientations:
+```{r}
+
+for(i in 1:10) {
+   cc <- cor(csm)
+   diag(cc) <- 0;
+   
+   mi <- sort(apply(cc,1,function(x) x[which.max(abs(x))]))
+   if(mi[1]<0) {
+     flip.ind <- names(mi)[1]
+     csm[,flip.ind] <- -1*csm[,flip.ind]
+   }
+}
+```
+
+
+
+Visualize
+
+Scores
+```{r fig.width=6,fig.height=6}
+require(ComplexHeatmap)
+sl <- unique(gsub("-.*","",colnames(csm))); sc <- setNames(rainbow(length(sl)),sl)
+hc <- hclust(as.dist(1-abs(cor(csm,method='spearman'))))
+#hc <- hclust(as.dist(1-cor(csm)))
+plot(hc)
+co <- hc$order
+
+Heatmap(csm, cluster_rows = T, show_row_names = F,border=T, column_order=co,
+        bottom_annotation=HeatmapAnnotation(sample=factor(setNames(gsub("-.*","",colnames(csm)),colnames(csm)),levels=sl),col=list(sample=sc)),
+        right_annotation = HeatmapAnnotation(which='row',sample=factor(setNames(gsub("-.*","",rownames(csm)),rownames(csm)),levels=sl),col=list(sample=sc))
+        )
+```
+
+
+Fix remaining flips
+```{r}
+csm[,co[c(2,3)]] <- -csm[,co[c(2,3)]]
+csm[,co[c(7:10)]] <- -csm[,co[c(7:10)]]
+csm[,co[c(1)]] <- -csm[,co[c(1)]]
+```
+
+
+
+
+```{r fig.width=5,fig.height=7}
+#x <- csm;
+#depth <- Matrix::colSums(cm)[rownames(csm)];
+#depth <- log10(depth); depth <- (depth-mean(depth))*range(diff(depth))*2
+#csm <- cbind(csm,depth=depth)
+
+hm <- Heatmap(csm, name='PC scores', cluster_rows = T, show_row_names = F,border=T, cluster_columns = hc,
+        #bottom_annotation=HeatmapAnnotation(sample=factor(setNames(gsub("-.*","",colnames(csm)),colnames(csm)),levels=sl),col=list(sample=sc)),
+        #right_annotation = HeatmapAnnotation(which='row',sample=factor(setNames(gsub("-.*","",rownames(csm)),rownames(csm)),levels=sl),col=list(sample=sc)),
+        col=circlize::colorRamp2(c(-3, 0, 3), c('darkgreen','grey90','orange')),
+        row_split = as.factor(setNames(gsub("_.*","",rownames(csm)),rownames(csm))),row_title_rot=0,
+        use_raster = T,raster_device = "CairoPNG")
+
+pdf(file='pc.heatmap.pdf',width=5,height=7); print(hm); dev.off()
+hm
+```
+
+```{r fig.width=10, fig.height=4.4}
+alpha <- 0.3; size <- 2;
+pl <- apply(csm,2,function(d) tcon$plotGraph(colors=d,alpha=alpha,size=size,mark.groups=F,plot.na=F,gradient.range.quantile=0.95,palette=colorRampPalette(c('darkgreen','grey90','orange'),space='Lab'))) %>% 
+    mapply(function(x,y) x+ggtitle(y)+ theme(plot.title = element_text(size=16)),.,colnames(csm), SIMPLIFY=F)
+#pl <- mapply(function(x,y) { x+ggtitle(y)},pl,colnames(csm),SIMPLIFY=F)
+pl <- plot_grid(plotlist=pl[co],nrow=2)
+pdf(file='tcon.PCs.pdf',width=10,height=4.4); print(pl); dev.off();
+pl
+```
+
+
+```{r fig.width=10, fig.height=4.4}
+alpha <- 0.8; size <- 4;
+pl <- tcon$plotPanel(colors=csm[,'BMET10-Tumor'],palette=colorRampPalette(c('darkgreen','grey90','orange'),space='Lab'),size=size,alpha=alpha,gradient.range.quantile=0.95,nrow=2,title.size=0,return.plotlist=T)
+pl <- mapply(function(x,y) x+ggtitle(y)+ theme(plot.title = element_text(size=16)),pl,names(tcon$samples),SIMPLIFY=F);
+pp <- plot_grid(plotlist=pl[co],nrow=2)
+pdf(file='tSNE.BMET10_PC.pdf',width=10,height=4.4); print(pp); dev.off();
+pp
+```
+
+```{r fig.width=10, fig.height=4}
+alpha <- 0.8; size <- 2;
+#sig1 IER2, SOX9, SOX4, FOS? JUNB   BRD2, AHNAK
+#sig2 MT-CO2, MT-CO1
+tcon$plotPanel(gene='UBE2T',size=size,alpha=alpha,gradient.range.quantile=0.95,nrow=2,title.size=4)
+```
+
+```{r fig.width=3, fig.height=3}
+# MT-CO2
+tcon$plotGraph(gene='STAT3',alpha=0.3,size=2,gradient.range.quantile=0.95)
+```
+
+```{r fig.width=2, fig.height=5}
+gnl <- c('IER2','JUNB','SOX4','BRD2','CLDN4',
+         'STMN1','H2AFZ','UBE2T',
+         'MT-CO1','MT-ND1')
+pl <- lapply(gnl,function(g) tcon$plotGraph(gene=g,alpha=0.3,size=2,gradient.range.quantile=0.95)+ggtitle(g)+ theme(plot.title = element_text(size=18)))
+pp <- plot_grid(plotlist=pl[as.vector(t(matrix(1:10,ncol=2)))],ncol=2)
+pdf(file='tcon.genes.pdf',width=4,height=11); print(pp); dev.off();
+pp
+```
+
+Expression on the sample-specific tSNEs
+```{r fig.width=10, fig.height=3}
+gns <- c("IER2","JUNB",'SOX4','STMN1','H2AFZ','UBE2T')
+gns <- c("IER2",'SOX4','UBE2T')
+alpha <- 0.8; size <- 3
+pl <- lapply(gns,function(g) { 
+  pl <- tcon$plotPanel(gene=g,size=size,alpha=alpha,gradient.range.quantile=0.95,nrow=1,title.size=0,return.plotlist=T)[co];
+  #pl <- mapply(function(x,y) x+ggtitle(y)+ theme(plot.title = element_text(size=16)),pl,names(tcon$samples),SIMPLIFY=F);
+})
+
+pp <- plot_grid(plotlist=unlist(pl,recursive=F),nrow=length(gns))
+pdf(file='tSNE.genes.pdf',width=20,height=6); print(pp); dev.off();
+pp
+```
+
+
+
+PC overlap
+```{r}
+listToOverlapMatrix2=function(res,counts=NULL){
+
+  lc=length(res)
+  stat=matrix(rep(0,lc*lc),lc,lc)
+  for( i in seq(lc)){
+    for (j in seq(lc)){
+      if( i!=j){
+        stat[i,j]=length(intersect(res[[i]],res[[j]]))/length(union(res[[i]],res[[j]]))
+        if (!is.null(counts)){stat[i,j]=length(intersect(res[[i]],res[[j]])) }
+      }
+    }
+  }
+  colnames(stat)=names(res)
+  rownames(stat)=names(res)
+  return(stat)
+  
+}
+topgnl <- lapply(pcl,function(x) na.omit((rownames(x)[order(abs(x[,1]),decreasing =T)])[1:200]))
+om <- listToOverlapMatrix2(topgnl); diag(om) <- NA;
+```
+
+```{r fig.width=6,fig.height=5}
+#pheatmap(rr,na_col = "gray50",filename='de.IB.overlap.pdf',height=4.3,width=5,treeheight_row=25,treeheight_col=25)
+hm <- pheatmap::pheatmap(om,na_col = "gray50",treeheight_row=25,treeheight_col=25)
+pdf(file='overlap.heatmap.pdf',width=6,height=5); print(hm); dev.off();
+hm
+```
+
+```{r}
+intersect(topgnl[['BMET1-Tumor']],topgnl[['BMET5-Tumor']])
+```
+
+```{r}
+intersect(topgnl[['BMET10-Tumor']],topgnl[['BMET5-Tumor']])
+```
+
+Calculate go enrichments
+```{r}
+topgnl <- lapply(pcl,function(x) (rownames(x)[order(abs(x[,1]),decreasing =T)])[1:200])
+topgnl$intersect <- intersect(topgnl[['BMET10-Tumor']],topgnl[['BMET5-Tumor']])
+#topgnl <- unlist(lapply(1:ncol(pcl[[1]]),function(i) setNames(lapply(pcl,function(x) (rownames(x)[order(abs(x[,i]),decreasing =T)])[1:200]) ,paste(names(pcl),i,sep='_'))),recursive=F)
+#topgnl$intersect <- intersect(topgnl[['BMET10-Tumor_1']],topgnl[['BMET5-Tumor_1']])
+
+topgnl$all <- common.genes;
+topgnl.entrez <- lapply(topgnl, bitr, 'SYMBOL', 'ENTREZID', org.Hs.eg.db) %>% lapply(`[[`, "ENTREZID")
+common.genes.entrez <- topgnl.entrez$all; topgnl.entrez$all <- NULL;
+
+top.gos <- lapply(topgnl.entrez,enrichGOOpt,universe=common.genes.entrez, ont='BP', goData=go_datas[['BP']], readable=T, OrgDB=org.Hs.eg.db)
+```
+
+
+```{r}
+cx <-gos.cluster(top.gos[-grep('intersect',names(top.gos))],n.clusters=10,max.pval=0.05)
+```
+
+```{r fig.width=8,fig.height=5}
+mu <- Heatmap(as.matrix(cx$summary),col=cols$up,border=T,show_row_dend=F,show_column_dend=F, heatmap_legend_param = list(title = 'Z score'), row_names_max_width = unit(8, "cm"),row_names_gp = gpar(fontsize = 10),)
+pdf(file='tumor.pc.functions.pdf',width=7,height=4.5); draw(mu, heatmap_legend_side = "left"); dev.off();
+mu
+```
+
+
+```{r}
+names(cx$clusters)[cx$clusters==cx$cluster['epithelial cell differentiation']]
+```
+
+```{r}
+cx$joint[cx$joint$Description=='epithelial cell differentiation',]
+```
+
+```{r}
+cx$joint[cx$joint$Description=='transforming growth factor beta receptor signaling pathway',]
+```
+
+```{r}
+cx$joint[cx$joint$Description=='vasculature development',]
+```
+
+
+```{r}
+cx$joint[cx$joint$Description=="stress response to metal ion",]
+```
+
+Clustering-based analysis
+
+```{r}
+tcon$findCommunities(method=leiden.community,resolution=0.6)
+```
+
+
+```{r fig.width=8, fig.height=4}
+alpha <- 0.3; size <- 2; 
+tcon$embedding <- tcon$misc$embeddings$lv
+n1 <- tcon$plotGraph(color.by='sample',alpha=alpha,size=size,mark.groups=T,plot.na=F)
+#n2 <- tcon$plotGraph(gene='FOS',alpha=alpha,size=size,mark.groups=F,plot.na=F)
+n2 <- tcon$plotGraph(alpha=alpha,size=size,mark.groups=T,plot.na=F)
+plot_grid(plotlist=list(n1,n2),nrow=1)
+```
+
+```{r}
+tfac <- tcon$clusters$leiden$groups
+levels(tfac) <- c('1','2','3','3')
+```
+
+```{r}
+tcon.de <- tcon$getDifferentialGenes(groups=tfac,n.cores=30,append.auc=TRUE,z.threshold=0,upregulated.only=T)
+```
+
+
+```{r fig.width=12,fig.height=12}
+#source("~/m/p2/conos/R/plot.R")
+#, column.metadata.colors = list(clusters=typefc.pal)
+pp <- plotDEheatmap(tcon,tfac,tcon.de,n.genes.per.cluster = 20 ,show.gene.clusters=T,column.metadata=list(samples=tcon$getDatasetPerCell()),order.clusters = T,use_raster = T,raster_device = "CairoPNG")
+#pdf(file='annot.heatmap.pdf',width=10,height=30); print(pp); dev.off();
+pp
+```
+
+Calculate enrichments
+```{r}
+tgos <- calculate.gos(lapply(tcon.de,function(de) { de$pvalue <- de$PValue; de$padj <- de$PAdj; de$log2FoldChange <- de$M; rownames(de) <- de$Gene; list(res=de) }),n.top.genes = 100)
+```
+
+Calculate and plot clusters:
+```{r}
+cols <- list(up=colorRamp2(c(0, 6), c("grey98", "red")),down=colorRamp2(c(0, 6), c("grey98", "blue")))
+n.clusters <- 20; max.pval <- 0.05;
+```
+
+
+```{r}
+cx <- lapply(tgos,gos.cluster,n.clusters=10,max.pval=max.pval)
+```
+
+```{r fig.width=8,fig.height=5}
+mu <- Heatmap(as.matrix(cx$up$summary),col=cols$up,border=T,cluster_columns=F,show_row_dend=F,show_column_dend=F, heatmap_legend_param = list(title = 'Z score'), row_names_max_width = unit(8, "cm"),row_names_gp = gpar(fontsize = 10),)
+#md <- Heatmap(as.matrix(cx$down$summary),col=cols$down,border=T,show_row_dend=F,show_column_dend=F, heatmap_legend_param = list(title = 'Z score'), row_names_max_width = unit(8, "cm"),row_names_gp = gpar(fontsize = 10))
+#pdf(file='de.IB.up.pdf',width=7,height=4.5); draw(mu, heatmap_legend_side = "left"); dev.off();
+#pdf(file='de.IB.down.pdf',width=7,height=4.5); draw(md, heatmap_legend_side = "left"); dev.off();
+pdf(file='tcon.cluster.go.pdf',width=5,height=2.5); print(mu); dev.off();
+mu
+```
+
+
+```{r}
+n2 <- tcon$plotGraph(groups=tfac,alpha=alpha,size=size,mark.groups=T,plot.na=F,font.size=c(10,10))
+ggsave('tcon.clusters.pdf',n2,width=3,height=3)
+n2
+```
+
+
+A small version of the hetmap, for the main figure
+```{r fig.width=6,fig.height=8}
+source("~/m/p2/conos/R/plot.R")
+genes <- c('MS4A1','CD79A','CD79B','MZB1','VPREB3','SEC11C','IGLL5','GNLY','GZMB','LILRA4','AZU1','MPO','FCN1','IER3','C5AR1','IGJ','SOX4','STMN1','MYL9','HBD','GZMK','AR','KLK2')
+pp <- plotDEheatmap(scon,nfac,annot.de,n.genes.per.cluster = 20 ,show.gene.clusters=T, column.metadata.colors = list(clusters=typefc.pal), order.clusters = T, additional.genes = genes, labeled.gene.subset = genes, min.auc = 0.6,use_raster = T,raster_device = "CairoPNG")
+pp
+```
